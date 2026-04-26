@@ -1,1 +1,844 @@
 
+import { useState, useRef, useEffect } from "react";
+
+const C = {
+  bg:"#06080c", sur:"#0c1018", sur2:"#111820",
+  bdr:"#1e2830", bdrG:"#2a2010",
+  gold:"#c9a84c", goldL:"#e8c97a", goldD:"#7a6030",
+  txt:"#d8e8f0", dim:"#5a7088",
+  red:"#e05050", ora:"#e08040", grn:"#40c080", blu:"#4090e0",
+};
+
+const CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&family=IBM+Plex+Mono:wght@400;600&display=swap');
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#06080c;font-family:'Cairo',sans-serif;color:#d8e8f0;direction:rtl;}
+input,textarea,select{background:#111820;border:1px solid #1e2830;color:#d8e8f0;font-family:'Cairo',sans-serif;font-size:9pt;border-radius:3px;padding:6px 10px;width:100%;outline:none;direction:rtl;}
+input:focus,textarea:focus,select:focus{border-color:#7a6030;}
+button{cursor:pointer;font-family:'Cairo',sans-serif;border:none;border-radius:3px;transition:all .15s;}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.fi{animation:fi .3s ease;}
+.section{page-break-inside:avoid;break-inside:avoid;}
+::-webkit-scrollbar{width:4px;background:#0c1018;}
+::-webkit-scrollbar-thumb{background:#2a2010;}
+@media print{.np{display:none!important;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+`;
+
+// helpers
+const uid = () => "KD-" + Math.random().toString(36).slice(2,7).toUpperCase();
+const toDay = () => new Date().toLocaleDateString("ar-MA",{year:"numeric",month:"long",day:"numeric"});
+const isoDay = () => new Date().toISOString().slice(0,10);
+const fmtDH = n => (n||0).toLocaleString("fr-MA") + " DH";
+const sevC = s => s>=8 ? C.red : s>=5 ? C.ora : C.grn;
+const stC = s => s==="ok"?C.grn:s==="warn"?C.ora:s==="danger"?C.red:C.blu;
+
+// storage
+const dbGet = async k => { try{ const r=await window.storage.get(k); return r?JSON.parse(r.value):null; }catch{ return null; } };
+const dbSet = async (k,v) => { try{ await window.storage.set(k,JSON.stringify(v)); }catch(e){ console.error(e); } };
+const dbDel = async k => { try{ await window.storage.delete(k); }catch{} };
+const dbList = async p => { try{ const r=await window.storage.list(p); return r?.keys||[]; }catch{ return []; } };
+
+// AI
+const callAI = async (msgs, max=1500) => {
+  const r = await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:max,messages:msgs})
+  });
+  const d = await r.json();
+  const raw = d.content.map(b=>b.text||"").join("");
+  return JSON.parse(raw.replace(/```json|```/g,"").trim());
+};
+
+const analyzeAI = async (dtcs,complaint,vehicle,vitals,history) => {
+  const vs = Object.values(vitals).map(v=>`${v.label}: ${v.value} ${v.unit} [${v.status.toUpperCase()}]`).join("\n");
+  const hs = history.length ? "\nسجل:\n"+history.slice(0,4).map(h=>`- ${h.date}: ${h.dtcs} → ${h.ai?.verdict}`).join("\n") : "";
+  const prompt = `أنت خبير ميكانيكي Diagnostician. أجب بالدارجة المغربية مع مصطلحات فرنسية تقنية.
+
+السيارة: ${vehicle.make} ${vehicle.model} ${vehicle.year} — ${vehicle.fuel}
+شكوى: "${complaint}"
+أكواد: ${dtcs}
+Live Data:\n${vs}${hs}
+
+حلل الأكواد مع Live Data معاً (Cross-Reference). أجب فقط بـ JSON:
+{"root_cause":"تحليل 4-5 جمل","cross_ref_insight":"جملة Cross-Reference","severity":7,"verdict":"حكم قصير","actions":["إجراء 1","إجراء 2","إجراء 3","إجراء 4"],"dtc_meanings":{"P0300":"معنى"},"cost_min":500,"cost_max":1500,"urgency":"فوري"}`;
+  return callAI([{role:"user",content:prompt}]);
+};
+
+const ocrAI = async (b64, mt) => {
+  return callAI([{role:"user",content:[
+    {type:"image",source:{type:"base64",media_type:mt,data:b64}},
+    {type:"text",text:`OCR متخصص OBD2. استخرج أكواد DTC. أجب فقط بـ JSON:\n{"codes":["P0300"],"confidence":"high","notes":""}`}
+  ]}], 400);
+};
+
+// micro components
+const Sp = () => <div style={{width:18,height:18,border:`2px solid ${C.gold}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin .8s linear infinite",display:"inline-block"}} />;
+const Lbl = ({children,color}) => <div style={{fontSize:"7.5pt",color:color||C.dim,fontFamily:"monospace",letterSpacing:.5,marginBottom:3}}>{children}</div>;
+const Bdg = ({color,children}) => <span style={{fontFamily:"monospace",fontSize:"6.5pt",color,border:`1px solid ${color}`,padding:"1px 5px",borderRadius:2}}>{children}</span>;
+const Crd = ({children,style}) => <div style={{background:C.sur,border:`1px solid ${C.bdr}`,borderRadius:4,padding:12,...style}}>{children}</div>;
+const StT = ({children,mt}) => <div style={{fontSize:"9pt",fontWeight:700,color:C.goldL,marginBottom:8,paddingBottom:4,borderBottom:`1px solid ${C.bdrG}`,marginTop:mt||0}}>{children}</div>;
+const Fld = ({label,full,children}) => <div style={{marginBottom:9,gridColumn:full?"1/-1":"auto"}}><Lbl>{label}</Lbl>{children}</div>;
+const Grd = ({cols,children}) => <div style={{display:"grid",gridTemplateColumns:`repeat(${cols||2},1fr)`,gap:"0 10px"}}>{children}</div>;
+
+const VITALS0 = {
+  battery:{label:"Tension Batterie",value:"12.4",unit:"Volts",status:"ok"},
+  coolant:{label:"Temp. Liquide",value:"88",unit:"°C",status:"ok"},
+  rpm:{label:"RPM Ralenti",value:"850",unit:"tr/min",status:"ok"},
+  map:{label:"MAP Sensor",value:"101",unit:"kPa",status:"ok"},
+  fuel_st:{label:"Fuel Trim ST",value:"+2",unit:"%",status:"ok"},
+  fuel_lt:{label:"Fuel Trim LT",value:"+4",unit:"%",status:"ok"},
+};
+
+// ── SIDEBAR ──
+function Sidebar({page, setPage, counts}) {
+  const nav = [
+    {id:"dash",  icon:"📊", label:"لوحة التحكم"},
+    {id:"new",   icon:"⚡", label:"تشخيص جديد"},
+    {id:"reps",  icon:"📋", label:"التقارير",   cnt:counts.reps},
+    {id:"cli",   icon:"👥", label:"الزبائن",    cnt:counts.cli},
+    {id:"veh",   icon:"🚗", label:"السيارات",   cnt:counts.veh},
+    {id:"inv",   icon:"💰", label:"الفواتير",   cnt:counts.inv},
+    {id:"set",   icon:"⚙️", label:"الإعدادات"},
+  ];
+  return (
+    <div style={{width:176,background:C.sur,borderLeft:`1px solid ${C.bdr}`,display:"flex",flexDirection:"column",flexShrink:0}}>
+      <div style={{padding:"12px 10px",borderBottom:`1px solid ${C.bdrG}`}}>
+        <div style={{fontSize:"13pt",fontWeight:900,color:C.goldL}}>الكاشف الذكي</div>
+        <div style={{fontFamily:"monospace",fontSize:"6pt",color:C.dim,letterSpacing:1.5}}>SMART DIAGNOSTIC v3</div>
+      </div>
+      <div style={{flex:1,overflowY:"auto"}}>
+        {nav.map(it => (
+          <div key={it.id} onClick={()=>setPage(it.id)}
+            style={{display:"flex",alignItems:"center",gap:7,padding:"9px 12px",cursor:"pointer",
+              background:page===it.id?"linear-gradient(90deg,#2a2010,#1a1408)":C.sur,
+              borderRight:page===it.id?`2px solid ${C.gold}`:"2px solid transparent",
+              color:page===it.id?C.goldL:C.dim}}>
+            <span style={{fontSize:"12pt"}}>{it.icon}</span>
+            <span style={{fontSize:"8.5pt",flex:1}}>{it.label}</span>
+            {it.cnt>0 && <span style={{background:C.ora,color:C.bg,fontSize:"7pt",fontWeight:700,padding:"1px 5px",borderRadius:10,fontFamily:"monospace"}}>{it.cnt}</span>}
+          </div>
+        ))}
+      </div>
+      <div style={{padding:"8px 10px",borderTop:`1px solid ${C.bdr}`,fontSize:"7pt",color:C.dim,fontFamily:"monospace"}}>{isoDay()}</div>
+    </div>
+  );
+}
+
+// ── DASHBOARD ──
+function Dashboard({reports, ws}) {
+  const total = reports.length;
+  const month = reports.filter(r=>r.date?.startsWith(new Date().toISOString().slice(0,7))).length;
+  const avgS = total ? Math.round(reports.reduce((s,r)=>s+(r.ai?.severity||0),0)/total*10)/10 : 0;
+  const revenue = reports.reduce((s,r)=>s+(r.invoice?.total||0),0);
+  const codes = {};
+  reports.forEach(r=>r.dtcs?.split(",").forEach(c=>{const k=c.trim();if(k)codes[k]=(codes[k]||0)+1;}));
+  const top = Object.entries(codes).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const maxCnt = top[0]?.[1]||1;
+
+  return (
+    <div className="fi" style={{padding:14,flex:1,overflowY:"auto"}}>
+      <div style={{fontSize:"11pt",fontWeight:700,color:C.goldL,marginBottom:12}}>📊 لوحة التحكم — {ws?.name}</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:7,marginBottom:12}}>
+        {[
+          ["إجمالي التقارير", total, C.blu],
+          ["هذا الشهر", month, C.gold],
+          ["متوسط الخطورة", avgS+"/10", sevC(avgS)],
+          ["الإيرادات", fmtDH(revenue), C.grn],
+        ].map(([l,v,c],i) => (
+          <Crd key={i} style={{padding:"10px 12px"}}>
+            <Lbl>{l}</Lbl>
+            <div style={{fontSize:"16pt",fontWeight:700,color:c,fontFamily:"monospace",lineHeight:1.1}}>{v}</div>
+          </Crd>
+        ))}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <Crd>
+          <StT>أكثر الأكواد تكراراً</StT>
+          {top.length===0 ? <div style={{color:C.dim,fontSize:"9pt"}}>لا بيانات</div> :
+            top.map(([code,cnt],i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:7,marginBottom:5}}>
+                <span style={{fontFamily:"monospace",fontSize:"9pt",color:C.ora,minWidth:58}}>{code}</span>
+                <div style={{flex:1,height:7,background:C.bdr,borderRadius:2,overflow:"hidden"}}>
+                  <div style={{height:"100%",width:`${(cnt/maxCnt)*100}%`,background:C.ora}} />
+                </div>
+                <span style={{fontFamily:"monospace",fontSize:"8pt",color:C.dim}}>{cnt}</span>
+              </div>
+            ))
+          }
+        </Crd>
+        <Crd>
+          <StT>آخر التشخيصات</StT>
+          {reports.slice(0,5).map((r,i)=>(
+            <div key={i} style={{borderBottom:`1px solid ${C.bdr}`,paddingBottom:5,marginBottom:5}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:"8.5pt",color:C.txt}}>{r.vehicle?.make} {r.vehicle?.model}</span>
+                <Bdg color={sevC(r.ai?.severity||0)}>{r.ai?.severity||0}/10</Bdg>
+              </div>
+              <div style={{fontSize:"7.5pt",color:C.dim}}>{r.date} · {r.client?.name}</div>
+            </div>
+          ))}
+          {!reports.length && <div style={{color:C.dim,fontSize:"9pt"}}>لا يوجد تشخيصات</div>}
+        </Crd>
+      </div>
+    </div>
+  );
+}
+
+// ── REPORTS LIST ──
+function RepsList({reports, onView, onDelete}) {
+  const [q,setQ] = useState("");
+  const fil = reports.filter(r=>
+    !q || r.vehicle?.plate?.includes(q)||r.client?.name?.includes(q)||r.dtcs?.includes(q)||r.id?.includes(q)
+  );
+  return (
+    <div className="fi" style={{padding:14,flex:1,overflowY:"auto"}}>
+      <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
+        <div style={{fontSize:"11pt",fontWeight:700,color:C.goldL,flex:1}}>📋 التقارير ({reports.length})</div>
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="بحث..." style={{width:180}} />
+      </div>
+      {!fil.length && <div style={{color:C.dim,textAlign:"center",padding:40}}>لا توجد تقارير</div>}
+      {fil.map((r,i)=>(
+        <div key={i} style={{background:C.sur,border:`1px solid ${C.bdr}`,borderRight:`3px solid ${sevC(r.ai?.severity||0)}`,
+          borderRadius:4,padding:"9px 12px",marginBottom:6,display:"flex",alignItems:"center",gap:10}}>
+          <div style={{flex:1}}>
+            <div style={{display:"flex",gap:7,alignItems:"center",marginBottom:3}}>
+              <span style={{fontFamily:"monospace",fontSize:"9pt",color:C.gold}}>{r.id}</span>
+              <Bdg color={sevC(r.ai?.severity||0)}>{r.ai?.severity||0}/10</Bdg>
+              {r.ai?.urgency==="فوري" && <Bdg color={C.red}>فوري</Bdg>}
+            </div>
+            <div style={{fontSize:"9pt",color:C.txt}}>{r.vehicle?.make} {r.vehicle?.model} {r.vehicle?.year} — {r.vehicle?.plate}</div>
+            <div style={{fontSize:"8pt",color:C.dim}}>{r.client?.name} · {r.date} · {r.dtcs}</div>
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>onView(r)} style={{background:C.blu,color:C.bg,padding:"5px 11px",fontSize:"8pt",fontWeight:600}}>عرض</button>
+            <button onClick={()=>onDelete(r.key)} style={{background:C.sur2,border:`1px solid ${C.bdr}`,color:C.red,padding:"5px 9px",fontSize:"8pt"}}>حذف</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── CLIENTS ──
+function Clients({reports}) {
+  const map = {};
+  reports.forEach(r=>{
+    const k = r.client?.phone||r.client?.name;
+    if(k){ if(!map[k]) map[k]={...r.client,visits:[]}; map[k].visits.push(r); }
+  });
+  const list = Object.values(map);
+  return (
+    <div className="fi" style={{padding:14,flex:1,overflowY:"auto"}}>
+      <div style={{fontSize:"11pt",fontWeight:700,color:C.goldL,marginBottom:10}}>👥 الزبائن ({list.length})</div>
+      {!list.length && <div style={{color:C.dim,textAlign:"center",padding:40}}>لا يوجد زبائن</div>}
+      {list.map((c,i)=>(
+        <Crd key={i} style={{marginBottom:8,borderRight:`3px solid ${C.blu}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+            <div>
+              <div style={{fontSize:"10pt",fontWeight:600,color:C.txt}}>{c.name||"—"}</div>
+              <div style={{fontSize:"8pt",color:C.dim,fontFamily:"monospace"}}>{c.phone}</div>
+            </div>
+            <div style={{textAlign:"left"}}>
+              <div style={{fontFamily:"monospace",fontSize:"14pt",color:C.gold,fontWeight:700}}>{c.visits.length}</div>
+              <div style={{fontSize:"7pt",color:C.dim}}>زيارة</div>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+            {c.visits.slice(0,3).map((v,j)=>(
+              <span key={j} style={{fontSize:"7.5pt",color:C.dim,background:C.sur2,border:`1px solid ${C.bdr}`,padding:"1px 6px",borderRadius:2,fontFamily:"monospace"}}>
+                {v.vehicle?.plate} · {v.date}
+              </span>
+            ))}
+          </div>
+        </Crd>
+      ))}
+    </div>
+  );
+}
+
+// ── VEHICLES ──
+function Vehicles({reports}) {
+  const map = {};
+  reports.forEach(r=>{
+    const k = r.vehicle?.plate||r.vehicle?.vin;
+    if(k){ if(!map[k]) map[k]={...r.vehicle,hist:[]}; map[k].hist.push(r); }
+  });
+  const list = Object.values(map);
+  return (
+    <div className="fi" style={{padding:14,flex:1,overflowY:"auto"}}>
+      <div style={{fontSize:"11pt",fontWeight:700,color:C.goldL,marginBottom:10}}>🚗 السيارات ({list.length})</div>
+      {!list.length && <div style={{color:C.dim,textAlign:"center",padding:40}}>لا توجد سيارات</div>}
+      {list.map((v,i)=>(
+        <Crd key={i} style={{marginBottom:8}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+            <div>
+              <div style={{fontSize:"10pt",fontWeight:600,color:C.txt}}>{v.make} {v.model} {v.year}</div>
+              <div style={{fontFamily:"monospace",fontSize:"9pt",color:C.ora}}>{v.plate}</div>
+            </div>
+            <div style={{textAlign:"left"}}>
+              <div style={{fontFamily:"monospace",fontSize:"14pt",color:C.gold,fontWeight:700}}>{v.hist.length}</div>
+              <div style={{fontSize:"7pt",color:C.dim}}>زيارة</div>
+            </div>
+          </div>
+          {v.hist.slice(0,3).map((h,j)=>(
+            <div key={j} style={{display:"flex",gap:7,alignItems:"center",marginTop:3,fontSize:"8pt"}}>
+              <span style={{color:C.dim,fontFamily:"monospace"}}>{h.date}</span>
+              <span style={{color:C.ora,fontFamily:"monospace"}}>{h.dtcs}</span>
+              <span style={{color:C.txt,flex:1}}>{h.ai?.verdict}</span>
+            </div>
+          ))}
+        </Crd>
+      ))}
+    </div>
+  );
+}
+
+// ── INVOICE EDIT ──
+function InvEdit({report, onSave, onBack}) {
+  const [items,setItems] = useState(report?.invoice?.items||[
+    {desc:"فحص إلكتروني OBD2",qty:1,price:150},
+    {desc:"تشخيص + تقرير AI",qty:1,price:100},
+  ]);
+  const [disc,setDisc] = useState(report?.invoice?.disc||0);
+  const [paid,setPaid] = useState(report?.invoice?.paid||false);
+  const sub = items.reduce((s,it)=>s+it.qty*it.price,0);
+  const total = sub-disc;
+  const upd = (i,k,v) => setItems(it=>it.map((x,j)=>j===i?{...x,[k]:v}:x));
+
+  return (
+    <div className="fi" style={{padding:14,flex:1,overflowY:"auto"}}>
+      <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
+        <button onClick={onBack} style={{background:C.sur2,border:`1px solid ${C.bdr}`,color:C.dim,padding:"5px 11px",fontSize:"8.5pt"}}>← رجوع</button>
+        <div style={{fontSize:"11pt",fontWeight:700,color:C.goldL,flex:1}}>💰 الفاتورة — {report?.id}</div>
+        <button onClick={()=>window.print()} className="np" style={{background:C.gold,color:C.bg,padding:"5px 12px",fontSize:"8.5pt",fontWeight:700}}>🖨 طباعة</button>
+      </div>
+      <Crd style={{marginBottom:9}}>
+        <StT>الزبون / السيارة</StT>
+        <div style={{fontSize:"9pt",color:C.txt,lineHeight:1.8}}>
+          <span style={{color:C.dim}}>الزبون: </span>{report?.client?.name} — {report?.client?.phone}<br/>
+          <span style={{color:C.dim}}>السيارة: </span>{report?.vehicle?.make} {report?.vehicle?.model} — {report?.vehicle?.plate}
+        </div>
+      </Crd>
+      <Crd style={{marginBottom:9}}>
+        <StT>بنود الفاتورة</StT>
+        {items.map((it,i)=>(
+          <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 50px 80px 28px",gap:5,marginBottom:5,alignItems:"center"}}>
+            <input value={it.desc} onChange={e=>upd(i,"desc",e.target.value)} placeholder="الوصف" />
+            <input value={it.qty} type="number" onChange={e=>upd(i,"qty",+e.target.value)} style={{direction:"ltr"}} />
+            <input value={it.price} type="number" onChange={e=>upd(i,"price",+e.target.value)} style={{direction:"ltr"}} placeholder="DH" />
+            <button onClick={()=>setItems(it=>it.filter((_,j)=>j!==i))} style={{background:"transparent",color:C.red,fontSize:"16pt",lineHeight:1}}>×</button>
+          </div>
+        ))}
+        <button onClick={()=>setItems(it=>[...it,{desc:"",qty:1,price:0}])}
+          style={{background:C.sur2,border:`1px dashed ${C.bdr}`,color:C.dim,padding:"5px",fontSize:"8.5pt",width:"100%",marginTop:3}}>
+          + إضافة بند
+        </button>
+      </Crd>
+      <Crd style={{marginBottom:9}}>
+        <Lbl>خصم (DH)</Lbl>
+        <input value={disc} type="number" onChange={e=>setDisc(+e.target.value)} style={{direction:"ltr",marginBottom:10}} />
+        <div style={{padding:9,background:C.sur2,borderRadius:3,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:"8.5pt",color:C.dim,lineHeight:2}}>
+            المجموع: <span style={{color:C.txt,fontFamily:"monospace"}}>{fmtDH(sub)}</span><br/>
+            الخصم: <span style={{color:C.ora,fontFamily:"monospace"}}>-{fmtDH(disc)}</span>
+          </div>
+          <div style={{textAlign:"left"}}>
+            <div style={{fontSize:"7.5pt",color:C.dim}}>الإجمالي</div>
+            <div style={{fontSize:"18pt",fontWeight:900,color:C.gold,fontFamily:"monospace"}}>{fmtDH(total)}</div>
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8}}>
+          <input type="checkbox" id="pd" checked={paid} onChange={e=>setPaid(e.target.checked)} style={{width:"auto"}} />
+          <label htmlFor="pd" style={{fontSize:"9pt",color:paid?C.grn:C.dim,cursor:"pointer"}}>✓ تم الدفع</label>
+        </div>
+      </Crd>
+      <button onClick={()=>onSave({items,disc,paid,sub,total,date:isoDay()})}
+        style={{background:C.grn,color:C.bg,padding:"10px",fontSize:"10pt",fontWeight:700,width:"100%"}}>
+        💾 حفظ الفاتورة
+      </button>
+    </div>
+  );
+}
+
+// ── INVOICES LIST ──
+function InvList({reports, onOpen}) {
+  const wi = reports.filter(r=>r.invoice);
+  const tot = wi.reduce((s,r)=>s+(r.invoice?.total||0),0);
+  const pd = wi.filter(r=>r.invoice?.paid).reduce((s,r)=>s+(r.invoice?.total||0),0);
+  return (
+    <div className="fi" style={{padding:14,flex:1,overflowY:"auto"}}>
+      <div style={{fontSize:"11pt",fontWeight:700,color:C.goldL,marginBottom:10}}>💰 الفواتير</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginBottom:12}}>
+        {[["الإجمالي",fmtDH(tot),C.gold],["مدفوع",fmtDH(pd),C.grn],["معلق",fmtDH(tot-pd),C.ora]].map(([l,v,c],i)=>(
+          <Crd key={i} style={{padding:"9px 11px"}}><Lbl>{l}</Lbl><div style={{fontSize:"13pt",fontWeight:700,color:c,fontFamily:"monospace"}}>{v}</div></Crd>
+        ))}
+      </div>
+      {!wi.length && <div style={{color:C.dim,textAlign:"center",padding:40}}>لا توجد فواتير</div>}
+      {wi.map((r,i)=>(
+        <div key={i} onClick={()=>onOpen(r)}
+          style={{background:C.sur,border:`1px solid ${C.bdr}`,borderRight:`3px solid ${r.invoice.paid?C.grn:C.ora}`,
+            borderRadius:4,padding:"9px 12px",marginBottom:6,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+          <div style={{flex:1}}>
+            <div style={{display:"flex",gap:7,alignItems:"center",marginBottom:2}}>
+              <span style={{fontFamily:"monospace",fontSize:"9pt",color:C.gold}}>{r.id}</span>
+              <Bdg color={r.invoice.paid?C.grn:C.ora}>{r.invoice.paid?"مدفوع":"معلق"}</Bdg>
+            </div>
+            <div style={{fontSize:"9pt",color:C.txt}}>{r.client?.name} — {r.vehicle?.plate}</div>
+            <div style={{fontSize:"7.5pt",color:C.dim}}>{r.invoice.date}</div>
+          </div>
+          <div style={{fontFamily:"monospace",fontSize:"13pt",fontWeight:700,color:C.gold}}>{fmtDH(r.invoice.total)}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── SETTINGS ──
+function Settings({ws, onSave}) {
+  const [w,setW] = useState({...ws});
+  const up = (k,v) => setW(x=>({...x,[k]:v}));
+  return (
+    <div className="fi" style={{padding:14,flex:1,overflowY:"auto"}}>
+      <div style={{fontSize:"11pt",fontWeight:700,color:C.goldL,marginBottom:10}}>⚙️ إعدادات الورشة</div>
+      <Crd>
+        <Grd>
+          <Fld label="اسم الورشة" full><input value={w.name||""} onChange={e=>up("name",e.target.value)} /></Fld>
+          <Fld label="المدينة"><input value={w.city||""} onChange={e=>up("city",e.target.value)} /></Fld>
+          <Fld label="الهاتف"><input value={w.phone||""} onChange={e=>up("phone",e.target.value)} /></Fld>
+          <Fld label="التقني الرئيسي"><input value={w.tech||""} onChange={e=>up("tech",e.target.value)} /></Fld>
+          <Fld label="العنوان" full><input value={w.address||""} onChange={e=>up("address",e.target.value)} /></Fld>
+        </Grd>
+        <button onClick={()=>onSave(w)} style={{background:C.gold,color:C.bg,padding:"8px 22px",fontSize:"9.5pt",fontWeight:700,marginTop:10}}>
+          💾 حفظ
+        </button>
+      </Crd>
+    </div>
+  );
+}
+
+// ── WIZARD ──
+function Wizard({ws, allReports, onDone}) {
+  const [step,setStep] = useState(0);
+  const [busy,setBusy] = useState(false);
+  const [err,setErr] = useState("");
+  const [ocrSt,setOcrSt] = useState("idle");
+  const [ocrRes,setOcrRes] = useState(null);
+  const fRef = useRef();
+
+  const [form,setForm] = useState({
+    client:{name:"",phone:"",complaint:""},
+    vehicle:{make:"",model:"",year:"",color:"",fuel:"بنزين",vin:"",plate:"",km_d:"",km_e:""},
+    vitals:{...VITALS0},
+    dtcs:"",
+  });
+
+  const sC = (k,v) => setForm(f=>({...f,client:{...f.client,[k]:v}}));
+  const sV = (k,v) => setForm(f=>({...f,vehicle:{...f.vehicle,[k]:v}}));
+  const sVt = (n,k,v) => setForm(f=>({...f,vitals:{...f.vitals,[n]:{...f.vitals[n],[k]:v}}}));
+
+  const plate = form.vehicle.plate?.trim().toUpperCase();
+  const hist = allReports.filter(r=>r.vehicle?.plate?.toUpperCase()===plate && plate);
+
+  const doOCR = async file => {
+    if(!file) return;
+    setOcrSt("loading");
+    try {
+      const b64 = await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(",")[1]);r.onerror=rej;r.readAsDataURL(file);});
+      const d = await ocrAI(b64, file.type||"image/jpeg");
+      setOcrRes(d); setOcrSt("done");
+    } catch { setOcrSt("error"); }
+  };
+
+  const generate = async () => {
+    if(!form.dtcs.trim()){setErr("أدخل أكواد DTC");return;}
+    setBusy(true); setErr("");
+    try {
+      const ai = await analyzeAI(form.dtcs,form.client.complaint,form.vehicle,form.vitals,hist);
+      const rep = {id:uid(),date:isoDay(),workshop:{...ws},client:form.client,vehicle:form.vehicle,vitals:form.vitals,dtcs:form.dtcs,ai,invoice:null};
+      rep.key = "report:"+rep.id;
+      await dbSet(rep.key, rep);
+      onDone(rep);
+    } catch(e) { setErr("خطأ AI: "+e.message); }
+    setBusy(false);
+  };
+
+  const STEPS = ["الزبون","Live Data","DTC"];
+
+  return (
+    <div className="fi" style={{padding:14,flex:1,overflowY:"auto"}}>
+      <div style={{fontSize:"11pt",fontWeight:700,color:C.goldL,marginBottom:10}}>⚡ تشخيص جديد</div>
+      {/* step bar */}
+      <div style={{display:"flex",gap:4,marginBottom:12}}>
+        {STEPS.map((s,i)=>(
+          <div key={i} style={{flex:1,textAlign:"center"}}>
+            <div style={{width:24,height:24,borderRadius:3,margin:"0 auto 2px",
+              background:i<step?C.gold:i===step?C.sur2:C.sur,
+              border:`1px solid ${i<step?C.goldD:i===step?C.gold:C.bdr}`,
+              display:"flex",alignItems:"center",justifyContent:"center",
+              fontFamily:"monospace",fontSize:"8pt",color:i<step?C.bg:i===step?C.gold:C.dim}}>
+              {i<step?"✓":i+1}
+            </div>
+            <div style={{fontSize:"6.5pt",color:i===step?C.goldL:C.dim}}>{s}</div>
+          </div>
+        ))}
+      </div>
+
+      <Crd>
+        {/* step 0 */}
+        {step===0 && <>
+          <StT>الزبون والمركبة</StT>
+          <Grd>
+            <Fld label="اسم الزبون"><input value={form.client.name} onChange={e=>sC("name",e.target.value)} placeholder="محمد..." /></Fld>
+            <Fld label="هاتف الزبون"><input value={form.client.phone} onChange={e=>sC("phone",e.target.value)} placeholder="0600..." /></Fld>
+            <Fld label="شكوى الزبون" full><textarea rows={2} value={form.client.complaint} onChange={e=>sC("complaint",e.target.value)} placeholder="السيارة كتهزز فلوط..." /></Fld>
+            <Fld label="الماركة"><input value={form.vehicle.make} onChange={e=>sV("make",e.target.value)} placeholder="Peugeot" /></Fld>
+            <Fld label="الموديل"><input value={form.vehicle.model} onChange={e=>sV("model",e.target.value)} placeholder="308" /></Fld>
+            <Fld label="السنة"><input value={form.vehicle.year} onChange={e=>sV("year",e.target.value)} placeholder="2018" /></Fld>
+            <Fld label="الوقود">
+              <select value={form.vehicle.fuel} onChange={e=>sV("fuel",e.target.value)}>
+                <option>بنزين</option><option>ديزل</option><option>هجين</option><option>كهربائي</option>
+              </select>
+            </Fld>
+            <Fld label="اللوحة"><input value={form.vehicle.plate} onChange={e=>sV("plate",e.target.value)} placeholder="12345-أ-1" /></Fld>
+            <Fld label="VIN" full><input value={form.vehicle.vin} onChange={e=>sV("vin",e.target.value)} placeholder="VF3..." /></Fld>
+            <Fld label="Km لوحة"><input value={form.vehicle.km_d} onChange={e=>sV("km_d",e.target.value)} placeholder="120000" /></Fld>
+            <Fld label="Km ECU"><input value={form.vehicle.km_e} onChange={e=>sV("km_e",e.target.value)} placeholder="120000" /></Fld>
+          </Grd>
+          {plate && hist.length>0 && (
+            <div style={{marginTop:7,padding:8,background:"linear-gradient(135deg,#001014,#001820)",border:`1px solid ${C.blu}`,borderRadius:3}}>
+              <Lbl color={C.blu}>⚡ {hist.length} زيارة سابقة لهاد السيارة</Lbl>
+              {hist.slice(0,2).map((h,i)=><div key={i} style={{fontSize:"8pt",color:C.dim,marginTop:2}}>· {h.date} — {h.ai?.verdict}</div>)}
+            </div>
+          )}
+        </>}
+
+        {/* step 1 */}
+        {step===1 && <>
+          <StT>البيانات الحية OBD2</StT>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {Object.entries(form.vitals).map(([name,v])=>(
+              <div key={name} style={{background:C.sur2,border:`1px solid ${C.bdr}`,borderBottom:`2px solid ${stC(v.status)}`,borderRadius:3,padding:"8px 9px"}}>
+                <Lbl>{v.label}</Lbl>
+                <input value={v.value} onChange={e=>sVt(name,"value",e.target.value)}
+                  style={{fontFamily:"monospace",fontSize:"13pt",fontWeight:600,color:stC(v.status),background:"transparent",border:"none",padding:0,direction:"ltr"}} />
+                <div style={{fontSize:"7pt",color:C.dim,fontFamily:"monospace",marginBottom:3}}>{v.unit}</div>
+                <select value={v.status} onChange={e=>sVt(name,"status",e.target.value)} style={{fontSize:"6.5pt",padding:"2px 4px",width:"auto"}}>
+                  <option value="ok">✓ OK</option><option value="warn">⚠ WARN</option>
+                  <option value="danger">✗ DANGER</option><option value="neutral">— N/A</option>
+                </select>
+              </div>
+            ))}
+          </div>
+        </>}
+
+        {/* step 2 */}
+        {step===2 && <>
+          <StT>أكواد الأعطال DTC</StT>
+          {/* OCR */}
+          <div style={{background:"linear-gradient(135deg,#080c18,#0c1020)",border:`1px solid ${C.blu}`,borderRadius:4,padding:10,marginBottom:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:6}}>
+              <Bdg color={C.blu}>OCR · AI</Bdg>
+              <span style={{fontSize:"9pt",color:C.txt,fontWeight:600}}>تصوير شاشة السكانير</span>
+            </div>
+            {ocrSt==="idle" && <button onClick={()=>fRef.current.click()} style={{background:C.blu,color:C.bg,padding:"6px 14px",fontSize:"9pt",fontWeight:700}}>📷 رفع صورة</button>}
+            {ocrSt==="loading" && <div style={{display:"flex",gap:8,alignItems:"center",color:C.gold}}><Sp /><span style={{fontSize:"8.5pt"}}>AI كيحلل...</span></div>}
+            {ocrSt==="done" && ocrRes && (
+              <div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:6}}>
+                  {ocrRes.codes.map((c,i)=><span key={i} style={{background:C.sur2,border:`1px solid ${C.ora}`,color:C.ora,fontFamily:"monospace",fontSize:"9pt",padding:"2px 7px",borderRadius:2}}>{c}</span>)}
+                </div>
+                <div style={{fontSize:"7.5pt",color:C.dim,marginBottom:6}}>ثقة: {ocrRes.confidence==="high"?"🟢 عالية":ocrRes.confidence==="medium"?"🟡 متوسطة":"🔴 منخفضة"}</div>
+                <button onClick={()=>{setForm(f=>({...f,dtcs:ocrRes.codes.join(", ")}));setOcrSt("idle");setOcrRes(null);}}
+                  style={{background:C.grn,color:C.bg,padding:"5px 13px",fontSize:"8.5pt",fontWeight:700}}>✓ استعمل هاد الأكواد</button>
+              </div>
+            )}
+            {ocrSt==="error" && (
+              <div style={{color:C.red,fontSize:"8.5pt"}}>
+                خطأ — جرب صورة أوضح
+                <button onClick={()=>setOcrSt("idle")} style={{background:"transparent",color:C.dim,fontSize:"8pt",textDecoration:"underline",marginRight:7}}>إعادة</button>
+              </div>
+            )}
+            <input ref={fRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>doOCR(e.target.files[0])} />
+          </div>
+          <Lbl>أو أدخل الأكواد يدوياً</Lbl>
+          <textarea rows={2} value={form.dtcs} onChange={e=>setForm(f=>({...f,dtcs:e.target.value}))}
+            placeholder="P0300, P0420, P0171..." style={{fontFamily:"monospace",direction:"ltr",letterSpacing:1}} />
+          <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:6}}>
+            {form.dtcs.split(",").map(c=>c.trim()).filter(Boolean).map((code,i)=>(
+              <span key={i} style={{background:C.sur2,border:`1px solid ${C.ora}`,color:C.ora,fontFamily:"monospace",fontSize:"9pt",padding:"2px 7px",borderRadius:2}}>{code}</span>
+            ))}
+          </div>
+          {err && <div style={{color:C.red,fontSize:"8.5pt",marginTop:7,fontFamily:"monospace"}}>{err}</div>}
+          {busy && <div style={{display:"flex",alignItems:"center",gap:9,marginTop:11,color:C.gold}}><Sp /><div><div style={{fontSize:"9pt"}}>AI كيحلل + Cross-Reference...</div><div style={{fontSize:"7.5pt",color:C.dim}}>قد يأخذ 15 ثانية</div></div></div>}
+        </>}
+
+        {/* nav */}
+        <div style={{display:"flex",justifyContent:"space-between",marginTop:12}}>
+          {step>0
+            ? <button onClick={()=>setStep(s=>s-1)} style={{background:C.sur2,border:`1px solid ${C.bdr}`,color:C.dim,padding:"7px 17px",fontSize:"9.5pt"}}>← رجوع</button>
+            : <div />}
+          {step<2
+            ? <button onClick={()=>setStep(s=>s+1)} style={{background:C.gold,color:C.bg,padding:"7px 20px",fontSize:"9.5pt",fontWeight:700}}>التالي →</button>
+            : <button onClick={generate} disabled={busy} style={{background:busy?C.bdr:C.grn,color:busy?C.dim:C.bg,padding:"7px 20px",fontSize:"9.5pt",fontWeight:700,opacity:busy?.7:1}}>
+                {busy ? "جاري التحليل..." : "⚡ توليد التقرير AI"}
+              </button>}
+        </div>
+      </Crd>
+    </div>
+  );
+}
+
+// ── REPORT VIEW ──
+function RepView({rep, onBack, onInvoice}) {
+  const ai = rep.ai||{};
+  const stCl = s => s==="ok"?C.grn:s==="warn"?C.ora:s==="danger"?C.red:C.blu;
+  const RH = ({num,label}) => (
+    <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:7}}>
+      <span style={{fontFamily:"monospace",fontSize:"7pt",color:C.gold,background:C.bdrG,border:`1px solid ${C.goldD}`,padding:"1px 5px",borderRadius:2}}>{num}</span>
+      <span style={{fontSize:"10pt",fontWeight:700,color:C.goldL}}>{label}</span>
+      <div style={{flex:1,height:1,background:`linear-gradient(90deg,${C.goldD},transparent)`}} />
+    </div>
+  );
+  return (
+    <div style={{flex:1,overflowY:"auto",background:C.bg}}>
+      {/* toolbar */}
+      <div className="np" style={{background:C.sur,borderBottom:`1px solid ${C.bdrG}`,padding:"8px 14px",display:"flex",gap:7,alignItems:"center"}}>
+        <button onClick={onBack} style={{background:C.sur2,border:`1px solid ${C.bdr}`,color:C.dim,padding:"5px 11px",fontSize:"8.5pt"}}>← رجوع</button>
+        <button onClick={()=>window.print()} style={{background:C.gold,color:C.bg,padding:"5px 13px",fontSize:"8.5pt",fontWeight:700}}>🖨 PDF</button>
+        <button onClick={onInvoice} style={{background:C.grn,color:C.bg,padding:"5px 13px",fontSize:"8.5pt",fontWeight:700}}>💰 فاتورة</button>
+        <span style={{fontFamily:"monospace",fontSize:"7.5pt",color:C.dim,marginRight:"auto"}}>{rep.id} · {rep.date}</span>
+        <Bdg color={sevC(ai.severity||0)}>{ai.severity||0}/10</Bdg>
+        {ai.urgency && <Bdg color={ai.urgency==="فوري"?C.red:C.ora}>{ai.urgency}</Bdg>}
+      </div>
+      {/* report header */}
+      <div style={{background:"linear-gradient(135deg,#080c14,#0c1420)",borderBottom:`1px solid ${C.goldD}`,padding:"13px 18px",position:"relative"}}>
+        <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,transparent,${C.gold},transparent)`}} />
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+          <div>
+            <div style={{fontSize:"16pt",fontWeight:900,color:C.goldL}}>{rep.workshop?.name}</div>
+            <div style={{fontFamily:"monospace",fontSize:"6.5pt",color:C.dim,letterSpacing:2}}>CENTRE DE DIAGNOSTIC AUTOMOBILE</div>
+            <div style={{fontSize:"8pt",color:C.dim,marginTop:5}}>{rep.workshop?.city} · {rep.workshop?.phone}</div>
+          </div>
+          <div style={{textAlign:"left"}}>
+            <div style={{fontFamily:"monospace",fontSize:"12pt",fontWeight:600,color:C.gold}}>{rep.id}</div>
+            <div style={{fontFamily:"monospace",fontSize:"8pt",color:C.dim}}>{rep.date}</div>
+            <div style={{fontSize:"8pt",color:C.dim,marginTop:3}}>التقني: <strong style={{color:C.goldD}}>{rep.workshop?.tech}</strong></div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{padding:"13px 18px"}}>
+        {/* 01 */}
+        <div className="section" style={{marginBottom:12}}>
+          <RH num="01" label="بيانات المركبة والزبون" />
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:"9pt"}}>
+            <tbody>
+              {[
+                ["الزبون",`${rep.client?.name} | ${rep.client?.phone}`],
+                ["المركبة",`${rep.vehicle?.make} ${rep.vehicle?.model} ${rep.vehicle?.year} · ${rep.vehicle?.fuel}`],
+                ["VIN",rep.vehicle?.vin||"—"],["اللوحة",rep.vehicle?.plate||"—"],
+                ["الكيلومتراج",`لوحة: ${rep.vehicle?.km_d} | ECU: ${rep.vehicle?.km_e}`],
+              ].map(([k,v],i)=>(
+                <tr key={i} style={{background:i%2===0?C.sur:C.sur2}}>
+                  <td style={{padding:"4px 7px",border:`1px solid ${C.bdr}`,color:C.dim,fontSize:"8pt",width:"32%"}}>{k}</td>
+                  <td style={{padding:"4px 7px",border:`1px solid ${C.bdr}`,color:C.txt,fontFamily:"monospace",fontSize:"8.5pt"}}>{v}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{background:"linear-gradient(135deg,#140a00,#1a1000)",border:`1px solid ${C.goldD}`,borderRight:`3px solid ${C.ora}`,padding:"7px 10px",marginTop:6,borderRadius:2}}>
+            <div style={{fontFamily:"monospace",fontSize:"7pt",color:C.ora,marginBottom:2}}>▸ شكوى الزبون</div>
+            <div style={{fontSize:"10pt",color:C.goldL,fontStyle:"italic"}}>"{rep.client?.complaint}"</div>
+          </div>
+        </div>
+        {/* 02 live */}
+        <div className="section" style={{marginBottom:12}}>
+          <RH num="02" label="البيانات الحية · Live Data OBD2" />
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:5}}>
+            {Object.values(rep.vitals||{}).map((v,i)=>(
+              <div key={i} style={{background:C.sur,border:`1px solid ${C.bdr}`,borderBottom:`2px solid ${stCl(v.status)}`,borderRadius:3,padding:"7px 9px"}}>
+                <div style={{fontSize:"6.5pt",color:C.dim,fontFamily:"monospace",textTransform:"uppercase"}}>{v.label}</div>
+                <div style={{fontFamily:"monospace",fontSize:"14pt",fontWeight:600,color:stCl(v.status),margin:"3px 0",direction:"ltr"}}>{v.value}</div>
+                <div style={{fontSize:"7pt",color:C.dim,fontFamily:"monospace"}}>{v.unit}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        {/* 03 dtc */}
+        <div className="section" style={{marginBottom:12}}>
+          <RH num="03" label="أكواد الأعطال · DTC" />
+          {(rep.dtcs||"").split(",").map(c=>c.trim()).filter(Boolean).map((code,i)=>(
+            <div key={i} style={{background:"linear-gradient(135deg,#120800,#180d00)",border:`1px solid ${C.bdr}`,borderRight:`3px solid ${C.ora}`,borderRadius:3,padding:"7px 10px",marginBottom:5,display:"grid",gridTemplateColumns:"auto 1fr",gap:9}}>
+              <div style={{fontFamily:"monospace",fontSize:"13pt",fontWeight:600,color:C.ora}}>{code}</div>
+              <div style={{fontSize:"9pt",color:C.txt}}>{ai.dtc_meanings?.[code]||"—"}</div>
+            </div>
+          ))}
+        </div>
+        {/* 04 AI */}
+        <div className="section" style={{marginBottom:12}}>
+          <RH num="04" label="التحليل الذكي + Cross-Reference" />
+          {ai.cross_ref_insight && (
+            <div style={{background:"linear-gradient(135deg,#001014,#001820)",border:`1px solid ${C.blu}`,borderRight:`3px solid ${C.blu}`,borderRadius:3,padding:"7px 10px",marginBottom:8}}>
+              <div style={{fontFamily:"monospace",fontSize:"7pt",color:C.blu,marginBottom:3}}>⚡ CROSS-REFERENCE INSIGHT</div>
+              <div style={{fontSize:"9.5pt",color:C.goldL,fontWeight:600}}>{ai.cross_ref_insight}</div>
+            </div>
+          )}
+          <div style={{background:"linear-gradient(135deg,#080c18,#0c1020)",border:`1px solid ${C.bdr}`,borderTop:`2px solid ${C.blu}`,borderRadius:3,padding:"9px 11px"}}>
+            <Bdg color={C.blu}>CLAUDE AI ANALYSIS</Bdg>
+            <div style={{marginTop:7,fontSize:"10pt",color:C.txt,lineHeight:1.7}}>{ai.root_cause}</div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:9,margin:"8px 0"}}>
+            <span style={{fontFamily:"monospace",fontSize:"8pt",color:C.dim,whiteSpace:"nowrap"}}>درجة الخطورة:</span>
+            <div style={{flex:1,height:11,background:C.bdr,borderRadius:2,overflow:"hidden"}}>
+              <div style={{height:"100%",width:`${(ai.severity||0)*10}%`,background:sevC(ai.severity||0)}} />
+            </div>
+            <span style={{fontFamily:"monospace",fontSize:"12pt",fontWeight:600,color:sevC(ai.severity||0)}}>{ai.severity||0}/10</span>
+          </div>
+          {ai.cost_min && (
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>
+              <div style={{background:C.sur,border:`1px solid ${C.bdr}`,borderRadius:3,padding:"6px 10px",textAlign:"center"}}>
+                <Lbl>COÛT ESTIMÉ</Lbl>
+                <div style={{fontSize:"12pt",fontWeight:700,color:C.gold,fontFamily:"monospace"}}>{ai.cost_min}–{ai.cost_max} DH</div>
+              </div>
+              <div style={{background:C.sur,border:`1px solid ${C.bdr}`,borderRadius:3,padding:"6px 10px",textAlign:"center"}}>
+                <Lbl>URGENCE</Lbl>
+                <div style={{fontSize:"12pt",fontWeight:700,color:C.ora}}>{ai.urgency}</div>
+              </div>
+            </div>
+          )}
+        </div>
+        {/* 05 actions */}
+        <div className="section" style={{marginBottom:12}}>
+          <RH num="05" label="خطة الإصلاح · Plan de Réparation" />
+          <ul style={{listStyle:"none"}}>
+            {(ai.actions||[]).map((a,i)=>(
+              <li key={i} style={{display:"flex",gap:8,alignItems:"flex-start",padding:"7px 0",borderBottom:`1px solid ${C.bdr}`,fontSize:"9.5pt"}}>
+                <div style={{fontFamily:"monospace",fontSize:"8pt",color:C.gold,background:C.bdrG,border:`1px solid ${C.goldD}`,width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:2,flexShrink:0}}>{i+1}</div>
+                <span style={{color:C.txt,lineHeight:1.5}}>{a}</span>
+              </li>
+            ))}
+          </ul>
+          <div style={{background:"linear-gradient(135deg,#001808,#002010)",border:`1px solid ${C.grn}`,borderRadius:3,padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
+            <span style={{fontFamily:"monospace",fontSize:"8pt",color:C.dim}}>VERDICT FINAL</span>
+            <span style={{fontSize:"11pt",fontWeight:700,color:C.grn}}>{ai.verdict}</span>
+          </div>
+        </div>
+        {/* 06 invoice */}
+        {rep.invoice && (
+          <div className="section" style={{marginBottom:12}}>
+            <RH num="06" label="الفاتورة · Facture" />
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:"9pt",marginBottom:6}}>
+              <thead>
+                <tr style={{background:C.sur2}}>
+                  {["البيان","الكمية","السعر","المجموع"].map((h,i)=>(
+                    <th key={i} style={{padding:"4px 7px",border:`1px solid ${C.bdr}`,color:C.dim,textAlign:"right",fontWeight:600}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rep.invoice.items.map((it,i)=>(
+                  <tr key={i} style={{background:i%2===0?C.sur:C.sur2}}>
+                    <td style={{padding:"4px 7px",border:`1px solid ${C.bdr}`,color:C.txt}}>{it.desc}</td>
+                    <td style={{padding:"4px 7px",border:`1px solid ${C.bdr}`,color:C.txt,textAlign:"center",fontFamily:"monospace"}}>{it.qty}</td>
+                    <td style={{padding:"4px 7px",border:`1px solid ${C.bdr}`,color:C.txt,fontFamily:"monospace",direction:"ltr"}}>{it.price} DH</td>
+                    <td style={{padding:"4px 7px",border:`1px solid ${C.bdr}`,color:C.gold,fontFamily:"monospace",direction:"ltr",fontWeight:600}}>{it.qty*it.price} DH</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div style={{textAlign:"left"}}>
+              <div style={{fontSize:"18pt",fontWeight:900,color:C.gold,fontFamily:"monospace"}}>{fmtDH(rep.invoice.total)}</div>
+              <Bdg color={rep.invoice.paid?C.grn:C.ora}>{rep.invoice.paid?"✓ مدفوع":"⏳ معلق"}</Bdg>
+            </div>
+          </div>
+        )}
+        {/* signature */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:40,marginTop:22,paddingTop:9,borderTop:`1px solid ${C.bdr}`}}>
+          {["توقيع التقني","توقيع الزبون"].map((l,i)=>(
+            <div key={i} style={{textAlign:"center"}}>
+              <div style={{borderBottom:`1px solid ${C.goldD}`,margin:"24px auto 5px",width:"70%"}} />
+              <div style={{fontFamily:"monospace",fontSize:"7.5pt",color:C.dim}}>{l}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={{background:C.sur,borderTop:`1px solid ${C.bdrG}`,padding:"6px 18px",display:"flex",justifyContent:"space-between"}}>
+        <span style={{fontFamily:"monospace",fontSize:"7pt",color:C.dim}}>الكاشف الذكي v3 Pro</span>
+        <span style={{fontFamily:"monospace",fontSize:"7pt",color:C.goldD}}>{rep.workshop?.name} © {new Date().getFullYear()}</span>
+      </div>
+    </div>
+  );
+}
+
+// ── ROOT ──
+export default function App() {
+  const [page, setPage] = useState("dash");
+  const [reports, setReports] = useState([]);
+  const [ws, setWs] = useState({name:"ورشة النجوم",city:"الدار البيضاء",phone:"0600000000",tech:"محمد"});
+  const [viewRep, setViewRep] = useState(null);
+  const [invRep, setInvRep] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const loadAll = async () => {
+    const wk = await dbGet("workshop:cfg");
+    if(wk) setWs(wk);
+    const keys = await dbList("report:");
+    const arr = [];
+    for(const k of keys){ const r=await dbGet(k); if(r) arr.push({...r,key:k}); }
+    arr.sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+    setReports(arr);
+    setLoading(false);
+  };
+
+  useEffect(()=>{ loadAll(); },[]);
+
+  const navTo = p => { setPage(p); if(p!=="view") setViewRep(null); if(p!=="inv_edit") setInvRep(null); };
+
+  const handleDone = async rep => { await loadAll(); setViewRep(rep); setPage("view"); };
+  const handleDel = async key => {
+    if(!confirm("تأكيد الحذف؟")) return;
+    await dbDel(key); await loadAll();
+    if(viewRep?.key===key){ setViewRep(null); setPage("reps"); }
+  };
+  const handleSaveInv = async inv => {
+    const upd = {...invRep, invoice:inv};
+    await dbSet(upd.key, upd);
+    await loadAll();
+    setViewRep(upd); setInvRep(null); setPage("view");
+  };
+  const handleSaveWs = async w => { await dbSet("workshop:cfg",w); setWs(w); };
+
+  const counts = {
+    reps: reports.length,
+    cli: [...new Set(reports.map(r=>r.client?.phone).filter(Boolean))].length,
+    veh: [...new Set(reports.map(r=>r.vehicle?.plate).filter(Boolean))].length,
+    inv: reports.filter(r=>r.invoice&&!r.invoice.paid).length,
+  };
+
+  if(loading) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,flexDirection:"column",gap:10}}>
+      <style>{CSS}</style>
+      <Sp />
+      <div style={{color:C.goldL,fontSize:"10pt",fontFamily:"'Cairo',sans-serif"}}>جاري التحميل...</div>
+    </div>
+  );
+
+  return (
+    <div style={{display:"flex",height:"100vh",overflow:"hidden",background:C.bg}}>
+      <style>{CSS}</style>
+      <Sidebar page={page} setPage={navTo} counts={counts} />
+      <div style={{flex:1,display:"flex",overflow:"hidden"}}>
+        {page==="dash"      && <Dashboard reports={reports} ws={ws} />}
+        {page==="new"       && <Wizard ws={ws} allReports={reports} onDone={handleDone} />}
+        {page==="reps"      && <RepsList reports={reports} onView={r=>{setViewRep(r);setPage("view");}} onDelete={handleDel} />}
+        {page==="view"      && viewRep && <RepView rep={viewRep} onBack={()=>setPage("reps")} onInvoice={()=>{setInvRep(viewRep);setPage("inv_edit");}} />}
+        {page==="inv_edit"  && invRep  && <InvEdit report={invRep} onSave={handleSaveInv} onBack={()=>setPage("view")} />}
+        {page==="cli"       && <Clients reports={reports} />}
+        {page==="veh"       && <Vehicles reports={reports} />}
+        {page==="inv"       && <InvList reports={reports} onOpen={r=>{setInvRep(r);setPage("inv_edit");}} />}
+        {page==="set"       && <Settings ws={ws} onSave={handleSaveWs} />}
+      </div>
+    </div>
+  );
+}
