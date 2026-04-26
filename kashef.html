@@ -1,844 +1,909 @@
-
-import { useState, useRef, useEffect } from "react";
-
-const C = {
-  bg:"#06080c", sur:"#0c1018", sur2:"#111820",
-  bdr:"#1e2830", bdrG:"#2a2010",
-  gold:"#c9a84c", goldL:"#e8c97a", goldD:"#7a6030",
-  txt:"#d8e8f0", dim:"#5a7088",
-  red:"#e05050", ora:"#e08040", grn:"#40c080", blu:"#4090e0",
-};
-
-const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&family=IBM+Plex+Mono:wght@400;600&display=swap');
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>الكاشف الذكي — Smart Diagnostic</title>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#06080c;--sur:#0c1018;--sur2:#111820;
+  --bdr:#1e2830;--bdrG:#2a2010;
+  --gold:#c9a84c;--goldL:#e8c97a;--goldD:#7a6030;
+  --txt:#d8e8f0;--dim:#5a7088;
+  --red:#e05050;--ora:#e08040;--grn:#40c080;--blu:#4090e0;
+}
 *{box-sizing:border-box;margin:0;padding:0;}
-body{background:#06080c;font-family:'Cairo',sans-serif;color:#d8e8f0;direction:rtl;}
-input,textarea,select{background:#111820;border:1px solid #1e2830;color:#d8e8f0;font-family:'Cairo',sans-serif;font-size:9pt;border-radius:3px;padding:6px 10px;width:100%;outline:none;direction:rtl;}
-input:focus,textarea:focus,select:focus{border-color:#7a6030;}
-button{cursor:pointer;font-family:'Cairo',sans-serif;border:none;border-radius:3px;transition:all .15s;}
+body{background:var(--bg);font-family:'Cairo',sans-serif;color:var(--txt);direction:rtl;min-height:100vh;}
+input,textarea,select{background:var(--sur2);border:1px solid var(--bdr);color:var(--txt);font-family:'Cairo',sans-serif;font-size:9pt;border-radius:4px;padding:7px 10px;width:100%;outline:none;direction:rtl;}
+input:focus,textarea:focus,select:focus{border-color:var(--goldD);}
+button{cursor:pointer;font-family:'Cairo',sans-serif;border:none;border-radius:4px;transition:all .15s;}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-.fi{animation:fi .3s ease;}
-.section{page-break-inside:avoid;break-inside:avoid;}
-::-webkit-scrollbar{width:4px;background:#0c1018;}
-::-webkit-scrollbar-thumb{background:#2a2010;}
-@media print{.np{display:none!important;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
-`;
+::-webkit-scrollbar{width:4px;background:var(--sur);}
+::-webkit-scrollbar-thumb{background:var(--bdrG);}
+@media print{.np{display:none!important;}-webkit-print-color-adjust:exact;print-color-adjust:exact;}
 
-// helpers
-const uid = () => "KD-" + Math.random().toString(36).slice(2,7).toUpperCase();
-const toDay = () => new Date().toLocaleDateString("ar-MA",{year:"numeric",month:"long",day:"numeric"});
-const isoDay = () => new Date().toISOString().slice(0,10);
-const fmtDH = n => (n||0).toLocaleString("fr-MA") + " DH";
-const sevC = s => s>=8 ? C.red : s>=5 ? C.ora : C.grn;
-const stC = s => s==="ok"?C.grn:s==="warn"?C.ora:s==="danger"?C.red:C.blu;
+/* LAYOUT */
+.app{display:flex;height:100vh;overflow:hidden;}
+.sidebar{width:180px;background:var(--sur);border-left:1px solid var(--bdr);display:flex;flex-direction:column;flex-shrink:0;}
+.sb-brand{padding:12px 10px;border-bottom:1px solid var(--bdrG);}
+.sb-title{font-size:13pt;font-weight:900;color:var(--goldL);}
+.sb-sub{font-size:6pt;color:var(--dim);letter-spacing:1.5px;font-family:monospace;}
+.sb-nav{flex:1;overflow-y:auto;}
+.nav-item{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;color:var(--dim);font-size:8.5pt;border-right:2px solid transparent;transition:all .15s;}
+.nav-item:hover{background:var(--sur2);}
+.nav-item.active{background:linear-gradient(90deg,#2a2010,#1a1408);border-right-color:var(--gold);color:var(--goldL);}
+.nav-item .cnt{background:var(--ora);color:var(--bg);font-size:7pt;font-weight:700;padding:1px 5px;border-radius:10px;font-family:monospace;margin-right:auto;}
+.sb-foot{padding:8px 10px;border-top:1px solid var(--bdr);font-size:7pt;color:var(--dim);font-family:monospace;}
+.main{flex:1;display:flex;overflow:hidden;}
+.page{flex:1;overflow-y:auto;padding:14px;animation:fi .3s ease;display:none;}
+.page.active{display:block;}
 
-// storage
-const dbGet = async k => { try{ const r=await window.storage.get(k); return r?JSON.parse(r.value):null; }catch{ return null; } };
-const dbSet = async (k,v) => { try{ await window.storage.set(k,JSON.stringify(v)); }catch(e){ console.error(e); } };
-const dbDel = async k => { try{ await window.storage.delete(k); }catch{} };
-const dbList = async p => { try{ const r=await window.storage.list(p); return r?.keys||[]; }catch{ return []; } };
+/* COMPONENTS */
+.pg-title{font-size:11pt;font-weight:700;color:var(--goldL);margin-bottom:12px;}
+.card{background:var(--sur);border:1px solid var(--bdr);border-radius:4px;padding:12px;margin-bottom:10px;}
+.sec-title{font-size:9pt;font-weight:700;color:var(--goldL);margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--bdrG);}
+.lbl{font-size:7.5pt;color:var(--dim);font-family:monospace;letter-spacing:.5px;display:block;margin-bottom:3px;}
+.bdg{font-family:monospace;font-size:6.5pt;padding:1px 5px;border-radius:2px;border-width:1px;border-style:solid;}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 10px;}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;}
+.fld{margin-bottom:9px;}
+.fld.full{grid-column:1/-1;}
+.btn{padding:7px 18px;font-size:9.5pt;font-weight:700;}
+.btn-gold{background:var(--gold);color:var(--bg);}
+.btn-grn{background:var(--grn);color:var(--bg);}
+.btn-dim{background:var(--sur2);border:1px solid var(--bdr);color:var(--dim);}
+.btn-blu{background:var(--blu);color:var(--bg);}
+.spinner{width:18px;height:18px;border:2px solid var(--gold);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;display:inline-block;vertical-align:middle;}
 
-// AI
-const callAI = async (msgs, max=1500) => {
-  const r = await fetch("https://api.anthropic.com/v1/messages",{
-    method:"POST", headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:max,messages:msgs})
-  });
-  const d = await r.json();
-  const raw = d.content.map(b=>b.text||"").join("");
-  return JSON.parse(raw.replace(/```json|```/g,"").trim());
+/* STAT CARDS */
+.stat{background:var(--sur);border:1px solid var(--bdr);border-radius:4px;padding:10px 12px;}
+.stat-val{font-size:16pt;font-weight:700;font-family:monospace;line-height:1.1;}
+.stat-lbl{font-size:7.5pt;color:var(--dim);}
+
+/* REPORT TABLE */
+.rtable{width:100%;border-collapse:collapse;font-size:9pt;}
+.rtable td{padding:4px 7px;border:1px solid var(--bdr);}
+.rtable tr:nth-child(odd) td{background:var(--sur);}
+.rtable tr:nth-child(even) td{background:var(--sur2);}
+.rtable td:first-child{color:var(--dim);font-size:8pt;width:32%;}
+
+/* VITAL CARD */
+.vital{background:var(--sur2);border:1px solid var(--bdr);border-radius:3px;padding:8px 9px;}
+.vital-val{font-family:monospace;font-size:13pt;font-weight:600;direction:ltr;display:block;margin:2px 0;}
+.vital-unit{font-size:7pt;color:var(--dim);font-family:monospace;}
+
+/* DTC */
+.dtc-row{background:linear-gradient(135deg,#120800,#180d00);border:1px solid var(--bdr);border-right:3px solid var(--ora);border-radius:3px;padding:7px 10px;margin-bottom:5px;display:grid;grid-template-columns:auto 1fr;gap:9px;align-items:center;}
+.dtc-code{font-family:monospace;font-size:13pt;font-weight:600;color:var(--ora);}
+
+/* REPORT VIEW */
+.rep-header{background:linear-gradient(135deg,#080c14,#0c1420);border-bottom:1px solid var(--goldD);padding:13px 18px;position:relative;}
+.rep-header::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--gold),transparent);}
+.rh-row{display:flex;justify-content:space-between;align-items:flex-start;}
+.rep-name{font-size:16pt;font-weight:900;color:var(--goldL);}
+.rep-id{font-family:monospace;font-size:12pt;font-weight:600;color:var(--gold);}
+.rep-sec{margin-bottom:12px;}
+.sec-hdr{display:flex;align-items:center;gap:7px;margin-bottom:7px;}
+.sec-num{font-family:monospace;font-size:7pt;color:var(--gold);background:var(--bdrG);border:1px solid var(--goldD);padding:1px 5px;border-radius:2px;}
+.sec-lbl{font-size:10pt;font-weight:700;color:var(--goldL);}
+.sec-line{flex:1;height:1px;background:linear-gradient(90deg,var(--goldD),transparent);}
+
+/* VERDICT */
+.verdict{background:linear-gradient(135deg,#001808,#002010);border:1px solid var(--grn);border-radius:3px;padding:9px 12px;display:flex;justify-content:space-between;align-items:center;margin-top:8px;}
+.cross-ref{background:linear-gradient(135deg,#001014,#001820);border:1px solid var(--blu);border-right:3px solid var(--blu);border-radius:3px;padding:7px 10px;margin-bottom:8px;}
+
+/* INVOICE */
+.inv-row{display:grid;grid-template-columns:1fr 50px 80px 28px;gap:5px;margin-bottom:5px;align-items:center;}
+
+/* SEVERITY BAR */
+.sev-bar{display:flex;align-items:center;gap:9px;margin:8px 0;}
+.sev-track{flex:1;height:11px;background:var(--bdr);border-radius:2px;overflow:hidden;}
+.sev-fill{height:100%;transition:width .5s;}
+
+/* LISTS */
+.rep-item{background:var(--sur);border:1px solid var(--bdr);border-radius:4px;padding:9px 12px;margin-bottom:6px;display:flex;align-items:center;gap:10px;}
+.rep-item .actions{display:flex;gap:6px;flex-shrink:0;}
+
+/* OCR */
+.ocr-box{background:linear-gradient(135deg,#080c18,#0c1020);border:1px solid var(--blu);border-radius:4px;padding:10px;margin-bottom:10px;}
+
+/* REPORT PRINT */
+@media print{
+  .sidebar,.toolbar,.np{display:none!important;}
+  .main{overflow:visible;}
+  .page{overflow:visible;}
+  .rep-sec{page-break-inside:avoid;}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="sb-brand">
+      <div class="sb-title">الكاشف الذكي</div>
+      <div class="sb-sub">SMART DIAGNOSTIC v3</div>
+    </div>
+    <div class="sb-nav">
+      <div class="nav-item active" onclick="nav('dash')"><span>📊</span>لوحة التحكم</div>
+      <div class="nav-item" onclick="nav('new')"><span>⚡</span>تشخيص جديد</div>
+      <div class="nav-item" onclick="nav('reps')"><span>📋</span>التقارير <span class="cnt" id="cnt-reps">0</span></div>
+      <div class="nav-item" onclick="nav('cli')"><span>👥</span>الزبائن <span class="cnt" id="cnt-cli" style="display:none">0</span></div>
+      <div class="nav-item" onclick="nav('veh')"><span>🚗</span>السيارات</div>
+      <div class="nav-item" onclick="nav('inv')"><span>💰</span>الفواتير <span class="cnt" id="cnt-inv" style="display:none">0</span></div>
+      <div class="nav-item" onclick="nav('set')"><span>⚙️</span>الإعدادات</div>
+    </div>
+    <div class="sb-foot" id="sb-date"></div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main">
+
+    <!-- DASHBOARD -->
+    <div class="page active" id="page-dash">
+      <div class="pg-title">📊 لوحة التحكم</div>
+      <div class="grid4" style="margin-bottom:12px">
+        <div class="stat"><div class="lbl">إجمالي التقارير</div><div class="stat-val" id="d-total" style="color:var(--blu)">0</div></div>
+        <div class="stat"><div class="lbl">هذا الشهر</div><div class="stat-val" id="d-month" style="color:var(--gold)">0</div></div>
+        <div class="stat"><div class="lbl">متوسط الخطورة</div><div class="stat-val" id="d-sev" style="color:var(--grn)">0/10</div></div>
+        <div class="stat"><div class="lbl">الإيرادات</div><div class="stat-val" id="d-rev" style="color:var(--grn)">0 DH</div></div>
+      </div>
+      <div class="grid2">
+        <div class="card">
+          <div class="sec-title">أكثر الأكواد تكراراً</div>
+          <div id="d-codes"><div style="color:var(--dim);font-size:9pt">لا بيانات</div></div>
+        </div>
+        <div class="card">
+          <div class="sec-title">آخر التشخيصات</div>
+          <div id="d-recent"><div style="color:var(--dim);font-size:9pt">لا يوجد</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NEW DIAGNOSIS -->
+    <div class="page" id="page-new">
+      <div class="pg-title">⚡ تشخيص جديد</div>
+      <!-- step bar -->
+      <div style="display:flex;gap:4px;margin-bottom:12px" id="wiz-steps"></div>
+      <div class="card" id="wiz-body"></div>
+    </div>
+
+    <!-- REPORTS -->
+    <div class="page" id="page-reps">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <div class="pg-title" style="margin:0;flex:1">📋 التقارير</div>
+        <input id="rep-search" placeholder="بحث..." style="width:180px" oninput="renderRepsList()">
+      </div>
+      <div id="reps-list"></div>
+    </div>
+
+    <!-- REPORT VIEW -->
+    <div class="page" id="page-view">
+      <div class="toolbar np" style="background:var(--sur);border-bottom:1px solid var(--bdrG);padding:8px 14px;display:flex;gap:7px;align-items:center;margin:-14px -14px 14px">
+        <button class="btn btn-dim" onclick="nav('reps')">← رجوع</button>
+        <button class="btn btn-gold" onclick="window.print()">🖨 PDF</button>
+        <button class="btn btn-grn" onclick="openInvoice()">💰 فاتورة</button>
+        <span id="view-id" style="font-family:monospace;font-size:7.5pt;color:var(--dim);margin-right:auto"></span>
+        <span id="view-sev" class="bdg"></span>
+        <span id="view-urg" class="bdg"></span>
+      </div>
+      <div id="rep-view-body"></div>
+    </div>
+
+    <!-- CLIENTS -->
+    <div class="page" id="page-cli">
+      <div class="pg-title">👥 الزبائن</div>
+      <div id="cli-list"></div>
+    </div>
+
+    <!-- VEHICLES -->
+    <div class="page" id="page-veh">
+      <div class="pg-title">🚗 السيارات</div>
+      <div id="veh-list"></div>
+    </div>
+
+    <!-- INVOICES -->
+    <div class="page" id="page-inv">
+      <div class="pg-title">💰 الفواتير</div>
+      <div class="grid3" style="margin-bottom:12px">
+        <div class="stat"><div class="lbl">الإجمالي</div><div class="stat-val" id="inv-tot" style="color:var(--gold)">0 DH</div></div>
+        <div class="stat"><div class="lbl">مدفوع</div><div class="stat-val" id="inv-pd" style="color:var(--grn)">0 DH</div></div>
+        <div class="stat"><div class="lbl">معلق</div><div class="stat-val" id="inv-pnd" style="color:var(--ora)">0 DH</div></div>
+      </div>
+      <div id="inv-list"></div>
+    </div>
+
+    <!-- INVOICE EDIT -->
+    <div class="page" id="page-inv-edit">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <button class="btn btn-dim" onclick="nav('view')">← رجوع</button>
+        <div class="pg-title" style="margin:0;flex:1">💰 الفاتورة</div>
+        <button class="btn btn-gold np" onclick="window.print()">🖨 طباعة</button>
+      </div>
+      <div class="card" style="margin-bottom:8px">
+        <div class="sec-title">الزبون / السيارة</div>
+        <div id="inv-client" style="font-size:9pt;color:var(--txt);line-height:1.8"></div>
+      </div>
+      <div class="card" style="margin-bottom:8px">
+        <div class="sec-title">بنود الفاتورة</div>
+        <div id="inv-items-wrap"></div>
+        <button class="btn btn-dim" onclick="addInvItem()" style="width:100%;margin-top:4px;border-style:dashed;font-size:8.5pt">+ إضافة بند</button>
+      </div>
+      <div class="card" style="margin-bottom:8px">
+        <span class="lbl">خصم (DH)</span>
+        <input type="number" id="inv-disc" value="0" style="direction:ltr;margin-bottom:8px" oninput="calcInv()">
+        <div style="padding:9px;background:var(--sur2);border-radius:3px;display:flex;justify-content:space-between;align-items:center">
+          <div style="font-size:8.5pt;color:var(--dim);line-height:2">
+            المجموع: <span id="inv-sub" style="color:var(--txt);font-family:monospace">0 DH</span><br>
+            الخصم: <span id="inv-disc-show" style="color:var(--ora);font-family:monospace">0 DH</span>
+          </div>
+          <div style="text-align:left">
+            <div style="font-size:7.5pt;color:var(--dim)">الإجمالي</div>
+            <div id="inv-total-show" style="font-size:18pt;font-weight:900;color:var(--gold);font-family:monospace">0 DH</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+          <input type="checkbox" id="inv-paid" style="width:auto">
+          <label for="inv-paid" style="font-size:9pt;cursor:pointer" id="inv-paid-lbl">تم الدفع</label>
+        </div>
+      </div>
+      <button class="btn btn-grn" onclick="saveInvoice()" style="width:100%;font-size:10pt">💾 حفظ الفاتورة</button>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="page" id="page-set">
+      <div class="pg-title">⚙️ إعدادات الورشة</div>
+      <div class="card">
+        <div class="grid2">
+          <div class="fld full"><span class="lbl">اسم الورشة</span><input id="ws-name"></div>
+          <div class="fld"><span class="lbl">المدينة</span><input id="ws-city"></div>
+          <div class="fld"><span class="lbl">الهاتف</span><input id="ws-phone"></div>
+          <div class="fld"><span class="lbl">التقني الرئيسي</span><input id="ws-tech"></div>
+          <div class="fld full"><span class="lbl">API Key (Anthropic)</span><input id="ws-key" type="password" placeholder="sk-ant-..."></div>
+        </div>
+        <button class="btn btn-gold" onclick="saveWs()">💾 حفظ</button>
+      </div>
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<script>
+// ══ STATE ══
+let reports = [], ws = {name:'ورشة النجوم',city:'الدار البيضاء',phone:'0600000000',tech:'محمد',key:''};
+let viewingRep = null, invRep = null;
+let wizStep = 0, wizForm = {};
+let invItems = [];
+
+// ══ STORAGE ══
+const DB = {
+  get:(k)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch{return null;}},
+  set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){console.error(e);}},
+  del:(k)=>{try{localStorage.removeItem(k);}catch{}},
+  keys:(p)=>{try{return Object.keys(localStorage).filter(k=>k.startsWith(p));}catch{return[];}}
 };
 
-const analyzeAI = async (dtcs,complaint,vehicle,vitals,history) => {
-  const vs = Object.values(vitals).map(v=>`${v.label}: ${v.value} ${v.unit} [${v.status.toUpperCase()}]`).join("\n");
-  const hs = history.length ? "\nسجل:\n"+history.slice(0,4).map(h=>`- ${h.date}: ${h.dtcs} → ${h.ai?.verdict}`).join("\n") : "";
-  const prompt = `أنت خبير ميكانيكي Diagnostician. أجب بالدارجة المغربية مع مصطلحات فرنسية تقنية.
+// ══ INIT ══
+function init(){
+  document.getElementById('sb-date').textContent = new Date().toISOString().slice(0,10);
+  const storedWs = DB.get('ws:cfg'); if(storedWs) ws = storedWs;
+  const keys = DB.keys('rep:');
+  reports = keys.map(k=>DB.get(k)).filter(Boolean).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  loadSettings();
+  updateCounts();
+  renderDash();
+}
 
+function updateCounts(){
+  const repsEl=document.getElementById('cnt-reps'); repsEl.textContent=reports.length;
+  const pending=reports.filter(r=>r.invoice&&!r.invoice.paid).length;
+  const cliEl=document.getElementById('cnt-inv');
+  if(pending>0){cliEl.style.display='';cliEl.textContent=pending;}else{cliEl.style.display='none';}
+  const clients=new Set(reports.map(r=>r.client?.phone).filter(Boolean)).size;
+  const cntCli=document.getElementById('cnt-cli');
+  if(clients>0){cntCli.style.display='';cntCli.textContent=clients;}else{cntCli.style.display='none';}
+}
+
+// ══ NAV ══
+function nav(page){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('page-'+page).classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n=>{
+    if(n.getAttribute('onclick')===`nav('${page}')`) n.classList.add('active');
+  });
+  if(page==='dash') renderDash();
+  if(page==='reps') renderRepsList();
+  if(page==='cli') renderClients();
+  if(page==='veh') renderVehicles();
+  if(page==='inv') renderInvList();
+  if(page==='new') initWizard();
+  if(page==='set') loadSettings();
+}
+
+// ══ DASHBOARD ══
+function renderDash(){
+  const total=reports.length;
+  const ym=new Date().toISOString().slice(0,7);
+  const month=reports.filter(r=>r.date?.startsWith(ym)).length;
+  const avgS=total?Math.round(reports.reduce((s,r)=>s+(r.ai?.severity||0),0)/total*10)/10:0;
+  const revenue=reports.reduce((s,r)=>s+(r.invoice?.total||0),0);
+  document.getElementById('d-total').textContent=total;
+  document.getElementById('d-month').textContent=month;
+  document.getElementById('d-sev').textContent=avgS+'/10';
+  document.getElementById('d-sev').style.color=avgS>=7?'var(--red)':avgS>=5?'var(--ora)':'var(--grn)';
+  document.getElementById('d-rev').textContent=revenue.toLocaleString('fr-MA')+' DH';
+
+  // top codes
+  const codes={};
+  reports.forEach(r=>r.dtcs?.split(',').forEach(c=>{const k=c.trim();if(k)codes[k]=(codes[k]||0)+1;}));
+  const top=Object.entries(codes).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const maxC=top[0]?.[1]||1;
+  document.getElementById('d-codes').innerHTML = top.length===0
+    ? '<div style="color:var(--dim);font-size:9pt">لا بيانات</div>'
+    : top.map(([c,n])=>`
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:5px">
+        <span style="font-family:monospace;font-size:9pt;color:var(--ora);min-width:58px">${c}</span>
+        <div style="flex:1;height:7px;background:var(--bdr);border-radius:2px;overflow:hidden">
+          <div style="height:100%;width:${(n/maxC)*100}%;background:var(--ora)"></div>
+        </div>
+        <span style="font-family:monospace;font-size:8pt;color:var(--dim)">${n}</span>
+      </div>`).join('');
+
+  // recent
+  document.getElementById('d-recent').innerHTML = reports.length===0
+    ? '<div style="color:var(--dim);font-size:9pt">لا يوجد</div>'
+    : reports.slice(0,5).map(r=>`
+      <div style="border-bottom:1px solid var(--bdr);padding-bottom:5px;margin-bottom:5px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:8.5pt;color:var(--txt)">${r.vehicle?.make||''} ${r.vehicle?.model||''}</span>
+          <span class="bdg" style="color:${sevC(r.ai?.severity||0)};border-color:${sevC(r.ai?.severity||0)}">${r.ai?.severity||0}/10</span>
+        </div>
+        <div style="font-size:7.5pt;color:var(--dim)">${r.date||''} · ${r.client?.name||''}</div>
+      </div>`).join('');
+}
+
+// ══ WIZARD ══
+const VITALS0={
+  battery:{l:'Tension Batterie',v:'12.4',u:'Volts',s:'ok'},
+  coolant:{l:'Temp. Liquide',v:'88',u:'°C',s:'ok'},
+  rpm:{l:'RPM Ralenti',v:'850',u:'tr/min',s:'ok'},
+  map:{l:'MAP Sensor',v:'101',u:'kPa',s:'ok'},
+  fuel_st:{l:'Fuel Trim ST',v:'+2',u:'%',s:'ok'},
+  fuel_lt:{l:'Fuel Trim LT',v:'+4',u:'%',s:'ok'},
+};
+
+function initWizard(){
+  wizStep=0;
+  wizForm={client:{name:'',phone:'',complaint:''},vehicle:{make:'',model:'',year:'',color:'',fuel:'بنزين',vin:'',plate:'',km_d:'',km_e:''},vitals:JSON.parse(JSON.stringify(VITALS0)),dtcs:''};
+  renderWiz();
+}
+
+function renderWizSteps(){
+  const steps=['الزبون','Live Data','DTC'];
+  document.getElementById('wiz-steps').innerHTML=steps.map((s,i)=>`
+    <div style="flex:1;text-align:center">
+      <div style="width:24px;height:24px;border-radius:3px;margin:0 auto 2px;
+        background:${i<wizStep?'var(--gold)':i===wizStep?'var(--sur2)':'var(--sur)'};
+        border:1px solid ${i<wizStep?'var(--goldD)':i===wizStep?'var(--gold)':'var(--bdr)'};
+        display:flex;align-items:center;justify-content:center;
+        font-family:monospace;font-size:8pt;
+        color:${i<wizStep?'var(--bg)':i===wizStep?'var(--gold)':'var(--dim)'}">
+        ${i<wizStep?'✓':i+1}
+      </div>
+      <div style="font-size:6.5pt;color:${i===wizStep?'var(--goldL)':'var(--dim)'}">${s}</div>
+    </div>`).join('');
+}
+
+function renderWiz(){
+  renderWizSteps();
+  const b=document.getElementById('wiz-body');
+  const plate=(wizForm.vehicle?.plate||'').trim().toUpperCase();
+  const hist=reports.filter(r=>r.vehicle?.plate?.toUpperCase()===plate&&plate);
+
+  if(wizStep===0){
+    b.innerHTML=`
+      <div class="sec-title">الزبون والمركبة</div>
+      <div class="grid2">
+        <div class="fld"><span class="lbl">اسم الزبون</span><input id="w-cname" value="${wizForm.client.name}" oninput="wizForm.client.name=this.value" placeholder="محمد..."></div>
+        <div class="fld"><span class="lbl">هاتف الزبون</span><input id="w-cphone" value="${wizForm.client.phone}" oninput="wizForm.client.phone=this.value" placeholder="0600..."></div>
+        <div class="fld full"><span class="lbl">شكوى الزبون</span><textarea rows="2" oninput="wizForm.client.complaint=this.value" placeholder="السيارة كتهزز فلوط...">${wizForm.client.complaint}</textarea></div>
+        <div class="fld"><span class="lbl">الماركة</span><input value="${wizForm.vehicle.make}" oninput="wizForm.vehicle.make=this.value" placeholder="Peugeot"></div>
+        <div class="fld"><span class="lbl">الموديل</span><input value="${wizForm.vehicle.model}" oninput="wizForm.vehicle.model=this.value" placeholder="308"></div>
+        <div class="fld"><span class="lbl">السنة</span><input value="${wizForm.vehicle.year}" oninput="wizForm.vehicle.year=this.value" placeholder="2018"></div>
+        <div class="fld"><span class="lbl">الوقود</span>
+          <select onchange="wizForm.vehicle.fuel=this.value">
+            <option ${wizForm.vehicle.fuel==='بنزين'?'selected':''}>بنزين</option>
+            <option ${wizForm.vehicle.fuel==='ديزل'?'selected':''}>ديزل</option>
+            <option ${wizForm.vehicle.fuel==='هجين'?'selected':''}>هجين</option>
+            <option ${wizForm.vehicle.fuel==='كهربائي'?'selected':''}>كهربائي</option>
+          </select>
+        </div>
+        <div class="fld"><span class="lbl">اللوحة</span><input value="${wizForm.vehicle.plate}" oninput="wizForm.vehicle.plate=this.value" placeholder="12345-أ-1"></div>
+        <div class="fld full"><span class="lbl">VIN</span><input value="${wizForm.vehicle.vin}" oninput="wizForm.vehicle.vin=this.value" placeholder="VF3..."></div>
+        <div class="fld"><span class="lbl">Km لوحة</span><input value="${wizForm.vehicle.km_d}" oninput="wizForm.vehicle.km_d=this.value" placeholder="120000"></div>
+        <div class="fld"><span class="lbl">Km ECU</span><input value="${wizForm.vehicle.km_e}" oninput="wizForm.vehicle.km_e=this.value" placeholder="120000"></div>
+      </div>
+      ${hist.length>0?`<div style="margin-top:7px;padding:8px;background:linear-gradient(135deg,#001014,#001820);border:1px solid var(--blu);border-radius:3px">
+        <span class="lbl" style="color:var(--blu)">⚡ ${hist.length} زيارة سابقة لهاد السيارة</span>
+        ${hist.slice(0,2).map(h=>`<div style="font-size:8pt;color:var(--dim);margin-top:2px">· ${h.date} — ${h.ai?.verdict||''}</div>`).join('')}
+      </div>`:''}
+      <div style="display:flex;justify-content:flex-end;margin-top:12px">
+        <button class="btn btn-gold" onclick="wizStep=1;renderWiz()">التالي →</button>
+      </div>`;
+  }
+
+  else if(wizStep===1){
+    const stCol=s=>s==='ok'?'var(--grn)':s==='warn'?'var(--ora)':s==='danger'?'var(--red)':'var(--blu)';
+    b.innerHTML=`
+      <div class="sec-title">البيانات الحية OBD2</div>
+      <div class="grid2">${Object.entries(wizForm.vitals).map(([n,v])=>`
+        <div class="vital" style="border-bottom:2px solid ${stCol(v.s)}">
+          <span class="lbl">${v.l}</span>
+          <input class="vital-val" value="${v.v}" oninput="wizForm.vitals['${n}'].v=this.value" style="font-family:monospace;font-size:13pt;font-weight:600;color:${stCol(v.s)};background:transparent;border:none;padding:0;direction:ltr">
+          <span class="vital-unit">${v.u}</span>
+          <select style="font-size:6.5pt;padding:2px 4px;width:auto;margin-top:3px" onchange="wizForm.vitals['${n}'].s=this.value;renderWiz()">
+            <option value="ok" ${v.s==='ok'?'selected':''}>✓ OK</option>
+            <option value="warn" ${v.s==='warn'?'selected':''}>⚠ WARN</option>
+            <option value="danger" ${v.s==='danger'?'selected':''}>✗ DANGER</option>
+            <option value="neutral" ${v.s==='neutral'?'selected':''}>— N/A</option>
+          </select>
+        </div>`).join('')}</div>
+      <div style="display:flex;justify-content:space-between;margin-top:12px">
+        <button class="btn btn-dim" onclick="wizStep=0;renderWiz()">← رجوع</button>
+        <button class="btn btn-gold" onclick="wizStep=2;renderWiz()">التالي →</button>
+      </div>`;
+  }
+
+  else if(wizStep===2){
+    b.innerHTML=`
+      <div class="sec-title">أكواد الأعطال DTC</div>
+      <div class="ocr-box">
+        <div style="display:flex;align-items:center;gap:7px;margin-bottom:6px">
+          <span class="bdg" style="color:var(--blu);border-color:var(--blu)">OCR · AI</span>
+          <span style="font-size:9pt;color:var(--txt);font-weight:600">تصوير شاشة السكانير</span>
+        </div>
+        <button class="btn btn-blu" onclick="document.getElementById('ocr-file').click()">📷 رفع صورة</button>
+        <input type="file" id="ocr-file" accept="image/*" style="display:none" onchange="doOCR(this)">
+        <div id="ocr-result" style="margin-top:6px"></div>
+      </div>
+      <span class="lbl">أو أدخل الأكواد يدوياً</span>
+      <textarea rows="2" id="dtc-input" oninput="wizForm.dtcs=this.value" style="font-family:monospace;direction:ltr;letter-spacing:1px" placeholder="P0300, P0420...">${wizForm.dtcs}</textarea>
+      <div id="dtc-tags" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px"></div>
+      <div id="wiz-err" style="color:var(--red);font-size:8.5pt;margin-top:7px;display:none"></div>
+      <div id="wiz-busy" style="display:none;align-items:center;gap:9px;margin-top:11px;color:var(--gold)">
+        <span class="spinner"></span>
+        <div><div style="font-size:9pt">AI كيحلل + Cross-Reference...</div><div style="font-size:7.5pt;color:var(--dim)">قد يأخذ 15 ثانية</div></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:12px">
+        <button class="btn btn-dim" onclick="wizStep=1;renderWiz()">← رجوع</button>
+        <button class="btn btn-grn" onclick="generateReport()">⚡ توليد التقرير AI</button>
+      </div>`;
+    renderDtcTags();
+  }
+}
+
+function renderDtcTags(){
+  const el=document.getElementById('dtc-tags'); if(!el) return;
+  const codes=(document.getElementById('dtc-input')?.value||wizForm.dtcs).split(',').map(c=>c.trim()).filter(Boolean);
+  el.innerHTML=codes.map(c=>`<span style="background:var(--sur2);border:1px solid var(--ora);color:var(--ora);font-family:monospace;font-size:9pt;padding:2px 7px;border-radius:2px">${c}</span>`).join('');
+}
+
+async function doOCR(input){
+  const file=input.files[0]; if(!file) return;
+  const el=document.getElementById('ocr-result');
+  el.innerHTML='<div style="display:flex;gap:7px;align-items:center;color:var(--gold)"><span class="spinner"></span><span style="font-size:8.5pt">AI كيحلل الصورة...</span></div>';
+  try{
+    const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(file);});
+    const apiKey=ws.key||'';
+    const resp=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:400,messages:[{role:'user',content:[
+        {type:'image',source:{type:'base64',media_type:file.type||'image/jpeg',data:b64}},
+        {type:'text',text:'OCR متخصص OBD2. استخرج أكواد DTC. أجب فقط بـ JSON:\n{"codes":["P0300"],"confidence":"high","notes":""}'}
+      ]}]})
+    });
+    const d=await resp.json();
+    const raw=d.content.map(b=>b.text||'').join('');
+    const result=JSON.parse(raw.replace(/```json|```/g,'').trim());
+    el.innerHTML=`
+      <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:5px">
+        ${result.codes.map(c=>`<span style="background:var(--sur2);border:1px solid var(--ora);color:var(--ora);font-family:monospace;font-size:9pt;padding:2px 7px;border-radius:2px">${c}</span>`).join('')}
+      </div>
+      <div style="font-size:7.5pt;color:var(--dim);margin-bottom:5px">ثقة: ${result.confidence==='high'?'🟢 عالية':result.confidence==='medium'?'🟡 متوسطة':'🔴 منخفضة'}</div>
+      <button class="btn btn-grn" style="font-size:8.5pt;padding:5px 12px" onclick="useOCRCodes(${JSON.stringify(result.codes)})">✓ استعمل هاد الأكواد</button>`;
+  }catch(e){el.innerHTML=`<div style="color:var(--red);font-size:8.5pt">خطأ — جرب صورة أوضح أو أضف API Key في الإعدادات</div>`;}
+}
+
+function useOCRCodes(codes){
+  wizForm.dtcs=codes.join(', ');
+  const inp=document.getElementById('dtc-input');
+  if(inp) inp.value=wizForm.dtcs;
+  renderDtcTags();
+}
+
+async function generateReport(){
+  const dtcs=(document.getElementById('dtc-input')?.value||wizForm.dtcs).trim();
+  if(!dtcs){document.getElementById('wiz-err').style.display='';document.getElementById('wiz-err').textContent='أدخل أكواد DTC';return;}
+  wizForm.dtcs=dtcs;
+  document.getElementById('wiz-err').style.display='none';
+  document.getElementById('wiz-busy').style.display='flex';
+  document.querySelector('#wiz-body .btn-grn').disabled=true;
+  const plate=(wizForm.vehicle.plate||'').trim().toUpperCase();
+  const hist=reports.filter(r=>r.vehicle?.plate?.toUpperCase()===plate&&plate);
+  try{
+    const ai=await callAI(dtcs,wizForm.client.complaint,wizForm.vehicle,wizForm.vitals,hist);
+    const rep={id:'KD-'+Math.random().toString(36).slice(2,7).toUpperCase(),date:new Date().toISOString().slice(0,10),workshop:{...ws},client:wizForm.client,vehicle:wizForm.vehicle,vitals:wizForm.vitals,dtcs,ai,invoice:null};
+    rep.key='rep:'+rep.id;
+    DB.set(rep.key,rep);
+    reports.unshift(rep);
+    updateCounts();
+    viewingRep=rep;
+    renderRepView();
+    nav('view');
+  }catch(e){
+    document.getElementById('wiz-err').style.display='';
+    document.getElementById('wiz-err').textContent='خطأ AI: '+e.message;
+    document.getElementById('wiz-busy').style.display='none';
+    document.querySelector('#wiz-body .btn-grn').disabled=false;
+  }
+}
+
+// ══ AI ══
+async function callAI(dtcs,complaint,vehicle,vitals,history){
+  const apiKey=ws.key||'';
+  const vs=Object.values(vitals).map(v=>`${v.l}: ${v.v} ${v.u} [${v.s.toUpperCase()}]`).join('\n');
+  const hs=history.length?'\nسجل:\n'+history.slice(0,4).map(h=>`- ${h.date}: ${h.dtcs} → ${h.ai?.verdict}`).join('\n'):'';
+  const prompt=`أنت خبير ميكانيكي. أجب بالدارجة المغربية مع مصطلحات فرنسية.
 السيارة: ${vehicle.make} ${vehicle.model} ${vehicle.year} — ${vehicle.fuel}
 شكوى: "${complaint}"
 أكواد: ${dtcs}
 Live Data:\n${vs}${hs}
-
-حلل الأكواد مع Live Data معاً (Cross-Reference). أجب فقط بـ JSON:
+أجب فقط بـ JSON:
 {"root_cause":"تحليل 4-5 جمل","cross_ref_insight":"جملة Cross-Reference","severity":7,"verdict":"حكم قصير","actions":["إجراء 1","إجراء 2","إجراء 3","إجراء 4"],"dtc_meanings":{"P0300":"معنى"},"cost_min":500,"cost_max":1500,"urgency":"فوري"}`;
-  return callAI([{role:"user",content:prompt}]);
-};
-
-const ocrAI = async (b64, mt) => {
-  return callAI([{role:"user",content:[
-    {type:"image",source:{type:"base64",media_type:mt,data:b64}},
-    {type:"text",text:`OCR متخصص OBD2. استخرج أكواد DTC. أجب فقط بـ JSON:\n{"codes":["P0300"],"confidence":"high","notes":""}`}
-  ]}], 400);
-};
-
-// micro components
-const Sp = () => <div style={{width:18,height:18,border:`2px solid ${C.gold}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin .8s linear infinite",display:"inline-block"}} />;
-const Lbl = ({children,color}) => <div style={{fontSize:"7.5pt",color:color||C.dim,fontFamily:"monospace",letterSpacing:.5,marginBottom:3}}>{children}</div>;
-const Bdg = ({color,children}) => <span style={{fontFamily:"monospace",fontSize:"6.5pt",color,border:`1px solid ${color}`,padding:"1px 5px",borderRadius:2}}>{children}</span>;
-const Crd = ({children,style}) => <div style={{background:C.sur,border:`1px solid ${C.bdr}`,borderRadius:4,padding:12,...style}}>{children}</div>;
-const StT = ({children,mt}) => <div style={{fontSize:"9pt",fontWeight:700,color:C.goldL,marginBottom:8,paddingBottom:4,borderBottom:`1px solid ${C.bdrG}`,marginTop:mt||0}}>{children}</div>;
-const Fld = ({label,full,children}) => <div style={{marginBottom:9,gridColumn:full?"1/-1":"auto"}}><Lbl>{label}</Lbl>{children}</div>;
-const Grd = ({cols,children}) => <div style={{display:"grid",gridTemplateColumns:`repeat(${cols||2},1fr)`,gap:"0 10px"}}>{children}</div>;
-
-const VITALS0 = {
-  battery:{label:"Tension Batterie",value:"12.4",unit:"Volts",status:"ok"},
-  coolant:{label:"Temp. Liquide",value:"88",unit:"°C",status:"ok"},
-  rpm:{label:"RPM Ralenti",value:"850",unit:"tr/min",status:"ok"},
-  map:{label:"MAP Sensor",value:"101",unit:"kPa",status:"ok"},
-  fuel_st:{label:"Fuel Trim ST",value:"+2",unit:"%",status:"ok"},
-  fuel_lt:{label:"Fuel Trim LT",value:"+4",unit:"%",status:"ok"},
-};
-
-// ── SIDEBAR ──
-function Sidebar({page, setPage, counts}) {
-  const nav = [
-    {id:"dash",  icon:"📊", label:"لوحة التحكم"},
-    {id:"new",   icon:"⚡", label:"تشخيص جديد"},
-    {id:"reps",  icon:"📋", label:"التقارير",   cnt:counts.reps},
-    {id:"cli",   icon:"👥", label:"الزبائن",    cnt:counts.cli},
-    {id:"veh",   icon:"🚗", label:"السيارات",   cnt:counts.veh},
-    {id:"inv",   icon:"💰", label:"الفواتير",   cnt:counts.inv},
-    {id:"set",   icon:"⚙️", label:"الإعدادات"},
-  ];
-  return (
-    <div style={{width:176,background:C.sur,borderLeft:`1px solid ${C.bdr}`,display:"flex",flexDirection:"column",flexShrink:0}}>
-      <div style={{padding:"12px 10px",borderBottom:`1px solid ${C.bdrG}`}}>
-        <div style={{fontSize:"13pt",fontWeight:900,color:C.goldL}}>الكاشف الذكي</div>
-        <div style={{fontFamily:"monospace",fontSize:"6pt",color:C.dim,letterSpacing:1.5}}>SMART DIAGNOSTIC v3</div>
-      </div>
-      <div style={{flex:1,overflowY:"auto"}}>
-        {nav.map(it => (
-          <div key={it.id} onClick={()=>setPage(it.id)}
-            style={{display:"flex",alignItems:"center",gap:7,padding:"9px 12px",cursor:"pointer",
-              background:page===it.id?"linear-gradient(90deg,#2a2010,#1a1408)":C.sur,
-              borderRight:page===it.id?`2px solid ${C.gold}`:"2px solid transparent",
-              color:page===it.id?C.goldL:C.dim}}>
-            <span style={{fontSize:"12pt"}}>{it.icon}</span>
-            <span style={{fontSize:"8.5pt",flex:1}}>{it.label}</span>
-            {it.cnt>0 && <span style={{background:C.ora,color:C.bg,fontSize:"7pt",fontWeight:700,padding:"1px 5px",borderRadius:10,fontFamily:"monospace"}}>{it.cnt}</span>}
-          </div>
-        ))}
-      </div>
-      <div style={{padding:"8px 10px",borderTop:`1px solid ${C.bdr}`,fontSize:"7pt",color:C.dim,fontFamily:"monospace"}}>{isoDay()}</div>
-    </div>
-  );
-}
-
-// ── DASHBOARD ──
-function Dashboard({reports, ws}) {
-  const total = reports.length;
-  const month = reports.filter(r=>r.date?.startsWith(new Date().toISOString().slice(0,7))).length;
-  const avgS = total ? Math.round(reports.reduce((s,r)=>s+(r.ai?.severity||0),0)/total*10)/10 : 0;
-  const revenue = reports.reduce((s,r)=>s+(r.invoice?.total||0),0);
-  const codes = {};
-  reports.forEach(r=>r.dtcs?.split(",").forEach(c=>{const k=c.trim();if(k)codes[k]=(codes[k]||0)+1;}));
-  const top = Object.entries(codes).sort((a,b)=>b[1]-a[1]).slice(0,5);
-  const maxCnt = top[0]?.[1]||1;
-
-  return (
-    <div className="fi" style={{padding:14,flex:1,overflowY:"auto"}}>
-      <div style={{fontSize:"11pt",fontWeight:700,color:C.goldL,marginBottom:12}}>📊 لوحة التحكم — {ws?.name}</div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:7,marginBottom:12}}>
-        {[
-          ["إجمالي التقارير", total, C.blu],
-          ["هذا الشهر", month, C.gold],
-          ["متوسط الخطورة", avgS+"/10", sevC(avgS)],
-          ["الإيرادات", fmtDH(revenue), C.grn],
-        ].map(([l,v,c],i) => (
-          <Crd key={i} style={{padding:"10px 12px"}}>
-            <Lbl>{l}</Lbl>
-            <div style={{fontSize:"16pt",fontWeight:700,color:c,fontFamily:"monospace",lineHeight:1.1}}>{v}</div>
-          </Crd>
-        ))}
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-        <Crd>
-          <StT>أكثر الأكواد تكراراً</StT>
-          {top.length===0 ? <div style={{color:C.dim,fontSize:"9pt"}}>لا بيانات</div> :
-            top.map(([code,cnt],i)=>(
-              <div key={i} style={{display:"flex",alignItems:"center",gap:7,marginBottom:5}}>
-                <span style={{fontFamily:"monospace",fontSize:"9pt",color:C.ora,minWidth:58}}>{code}</span>
-                <div style={{flex:1,height:7,background:C.bdr,borderRadius:2,overflow:"hidden"}}>
-                  <div style={{height:"100%",width:`${(cnt/maxCnt)*100}%`,background:C.ora}} />
-                </div>
-                <span style={{fontFamily:"monospace",fontSize:"8pt",color:C.dim}}>{cnt}</span>
-              </div>
-            ))
-          }
-        </Crd>
-        <Crd>
-          <StT>آخر التشخيصات</StT>
-          {reports.slice(0,5).map((r,i)=>(
-            <div key={i} style={{borderBottom:`1px solid ${C.bdr}`,paddingBottom:5,marginBottom:5}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{fontSize:"8.5pt",color:C.txt}}>{r.vehicle?.make} {r.vehicle?.model}</span>
-                <Bdg color={sevC(r.ai?.severity||0)}>{r.ai?.severity||0}/10</Bdg>
-              </div>
-              <div style={{fontSize:"7.5pt",color:C.dim}}>{r.date} · {r.client?.name}</div>
-            </div>
-          ))}
-          {!reports.length && <div style={{color:C.dim,fontSize:"9pt"}}>لا يوجد تشخيصات</div>}
-        </Crd>
-      </div>
-    </div>
-  );
-}
-
-// ── REPORTS LIST ──
-function RepsList({reports, onView, onDelete}) {
-  const [q,setQ] = useState("");
-  const fil = reports.filter(r=>
-    !q || r.vehicle?.plate?.includes(q)||r.client?.name?.includes(q)||r.dtcs?.includes(q)||r.id?.includes(q)
-  );
-  return (
-    <div className="fi" style={{padding:14,flex:1,overflowY:"auto"}}>
-      <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
-        <div style={{fontSize:"11pt",fontWeight:700,color:C.goldL,flex:1}}>📋 التقارير ({reports.length})</div>
-        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="بحث..." style={{width:180}} />
-      </div>
-      {!fil.length && <div style={{color:C.dim,textAlign:"center",padding:40}}>لا توجد تقارير</div>}
-      {fil.map((r,i)=>(
-        <div key={i} style={{background:C.sur,border:`1px solid ${C.bdr}`,borderRight:`3px solid ${sevC(r.ai?.severity||0)}`,
-          borderRadius:4,padding:"9px 12px",marginBottom:6,display:"flex",alignItems:"center",gap:10}}>
-          <div style={{flex:1}}>
-            <div style={{display:"flex",gap:7,alignItems:"center",marginBottom:3}}>
-              <span style={{fontFamily:"monospace",fontSize:"9pt",color:C.gold}}>{r.id}</span>
-              <Bdg color={sevC(r.ai?.severity||0)}>{r.ai?.severity||0}/10</Bdg>
-              {r.ai?.urgency==="فوري" && <Bdg color={C.red}>فوري</Bdg>}
-            </div>
-            <div style={{fontSize:"9pt",color:C.txt}}>{r.vehicle?.make} {r.vehicle?.model} {r.vehicle?.year} — {r.vehicle?.plate}</div>
-            <div style={{fontSize:"8pt",color:C.dim}}>{r.client?.name} · {r.date} · {r.dtcs}</div>
-          </div>
-          <div style={{display:"flex",gap:6}}>
-            <button onClick={()=>onView(r)} style={{background:C.blu,color:C.bg,padding:"5px 11px",fontSize:"8pt",fontWeight:600}}>عرض</button>
-            <button onClick={()=>onDelete(r.key)} style={{background:C.sur2,border:`1px solid ${C.bdr}`,color:C.red,padding:"5px 9px",fontSize:"8pt"}}>حذف</button>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── CLIENTS ──
-function Clients({reports}) {
-  const map = {};
-  reports.forEach(r=>{
-    const k = r.client?.phone||r.client?.name;
-    if(k){ if(!map[k]) map[k]={...r.client,visits:[]}; map[k].visits.push(r); }
+  const resp=await fetch('https://api.anthropic.com/v1/messages',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+    body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1500,messages:[{role:'user',content:prompt}]})
   });
-  const list = Object.values(map);
-  return (
-    <div className="fi" style={{padding:14,flex:1,overflowY:"auto"}}>
-      <div style={{fontSize:"11pt",fontWeight:700,color:C.goldL,marginBottom:10}}>👥 الزبائن ({list.length})</div>
-      {!list.length && <div style={{color:C.dim,textAlign:"center",padding:40}}>لا يوجد زبائن</div>}
-      {list.map((c,i)=>(
-        <Crd key={i} style={{marginBottom:8,borderRight:`3px solid ${C.blu}`}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
-            <div>
-              <div style={{fontSize:"10pt",fontWeight:600,color:C.txt}}>{c.name||"—"}</div>
-              <div style={{fontSize:"8pt",color:C.dim,fontFamily:"monospace"}}>{c.phone}</div>
-            </div>
-            <div style={{textAlign:"left"}}>
-              <div style={{fontFamily:"monospace",fontSize:"14pt",color:C.gold,fontWeight:700}}>{c.visits.length}</div>
-              <div style={{fontSize:"7pt",color:C.dim}}>زيارة</div>
-            </div>
-          </div>
-          <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-            {c.visits.slice(0,3).map((v,j)=>(
-              <span key={j} style={{fontSize:"7.5pt",color:C.dim,background:C.sur2,border:`1px solid ${C.bdr}`,padding:"1px 6px",borderRadius:2,fontFamily:"monospace"}}>
-                {v.vehicle?.plate} · {v.date}
-              </span>
-            ))}
-          </div>
-        </Crd>
-      ))}
-    </div>
-  );
+  const d=await resp.json();
+  if(d.error) throw new Error(d.error.message);
+  const raw=d.content.map(b=>b.text||'').join('');
+  return JSON.parse(raw.replace(/```json|```/g,'').trim());
 }
 
-// ── VEHICLES ──
-function Vehicles({reports}) {
-  const map = {};
-  reports.forEach(r=>{
-    const k = r.vehicle?.plate||r.vehicle?.vin;
-    if(k){ if(!map[k]) map[k]={...r.vehicle,hist:[]}; map[k].hist.push(r); }
-  });
-  const list = Object.values(map);
-  return (
-    <div className="fi" style={{padding:14,flex:1,overflowY:"auto"}}>
-      <div style={{fontSize:"11pt",fontWeight:700,color:C.goldL,marginBottom:10}}>🚗 السيارات ({list.length})</div>
-      {!list.length && <div style={{color:C.dim,textAlign:"center",padding:40}}>لا توجد سيارات</div>}
-      {list.map((v,i)=>(
-        <Crd key={i} style={{marginBottom:8}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
-            <div>
-              <div style={{fontSize:"10pt",fontWeight:600,color:C.txt}}>{v.make} {v.model} {v.year}</div>
-              <div style={{fontFamily:"monospace",fontSize:"9pt",color:C.ora}}>{v.plate}</div>
-            </div>
-            <div style={{textAlign:"left"}}>
-              <div style={{fontFamily:"monospace",fontSize:"14pt",color:C.gold,fontWeight:700}}>{v.hist.length}</div>
-              <div style={{fontSize:"7pt",color:C.dim}}>زيارة</div>
-            </div>
+// ══ HELPERS ══
+function sevC(s){return s>=8?'var(--red)':s>=5?'var(--ora)':'var(--grn)';}
+function fmtDH(n){return (n||0).toLocaleString('fr-MA')+' DH';}
+function stCol(s){return s==='ok'?'var(--grn)':s==='warn'?'var(--ora)':s==='danger'?'var(--red)':'var(--blu)';}
+
+// ══ REPORTS LIST ══
+function renderRepsList(){
+  const q=(document.getElementById('rep-search')?.value||'').toLowerCase();
+  const fil=reports.filter(r=>!q||r.vehicle?.plate?.toLowerCase().includes(q)||r.client?.name?.includes(q)||r.dtcs?.includes(q)||r.id?.toLowerCase().includes(q));
+  document.getElementById('reps-list').innerHTML=fil.length===0
+    ?'<div style="color:var(--dim);text-align:center;padding:40px">لا توجد تقارير</div>'
+    :fil.map(r=>`
+      <div class="rep-item" style="border-right:3px solid ${sevC(r.ai?.severity||0)}">
+        <div style="flex:1">
+          <div style="display:flex;gap:7px;align-items:center;margin-bottom:3px">
+            <span style="font-family:monospace;font-size:9pt;color:var(--gold)">${r.id}</span>
+            <span class="bdg" style="color:${sevC(r.ai?.severity||0)};border-color:${sevC(r.ai?.severity||0)}">${r.ai?.severity||0}/10</span>
+            ${r.ai?.urgency==='فوري'?'<span class="bdg" style="color:var(--red);border-color:var(--red)">فوري</span>':''}
           </div>
-          {v.hist.slice(0,3).map((h,j)=>(
-            <div key={j} style={{display:"flex",gap:7,alignItems:"center",marginTop:3,fontSize:"8pt"}}>
-              <span style={{color:C.dim,fontFamily:"monospace"}}>{h.date}</span>
-              <span style={{color:C.ora,fontFamily:"monospace"}}>{h.dtcs}</span>
-              <span style={{color:C.txt,flex:1}}>{h.ai?.verdict}</span>
-            </div>
-          ))}
-        </Crd>
-      ))}
-    </div>
-  );
+          <div style="font-size:9pt;color:var(--txt)">${r.vehicle?.make||''} ${r.vehicle?.model||''} ${r.vehicle?.year||''} — ${r.vehicle?.plate||''}</div>
+          <div style="font-size:8pt;color:var(--dim)">${r.client?.name||''} · ${r.date||''} · ${r.dtcs||''}</div>
+        </div>
+        <div class="actions">
+          <button class="btn btn-blu" style="padding:5px 11px;font-size:8pt" onclick="viewReport('${r.key}')">عرض</button>
+          <button class="btn btn-dim" style="padding:5px 9px;font-size:8pt;color:var(--red)" onclick="delReport('${r.key}')">حذف</button>
+        </div>
+      </div>`).join('');
 }
 
-// ── INVOICE EDIT ──
-function InvEdit({report, onSave, onBack}) {
-  const [items,setItems] = useState(report?.invoice?.items||[
-    {desc:"فحص إلكتروني OBD2",qty:1,price:150},
-    {desc:"تشخيص + تقرير AI",qty:1,price:100},
-  ]);
-  const [disc,setDisc] = useState(report?.invoice?.disc||0);
-  const [paid,setPaid] = useState(report?.invoice?.paid||false);
-  const sub = items.reduce((s,it)=>s+it.qty*it.price,0);
-  const total = sub-disc;
-  const upd = (i,k,v) => setItems(it=>it.map((x,j)=>j===i?{...x,[k]:v}:x));
+function viewReport(key){
+  viewingRep=reports.find(r=>r.key===key);
+  if(!viewingRep) return;
+  renderRepView();
+  nav('view');
+}
 
-  return (
-    <div className="fi" style={{padding:14,flex:1,overflowY:"auto"}}>
-      <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
-        <button onClick={onBack} style={{background:C.sur2,border:`1px solid ${C.bdr}`,color:C.dim,padding:"5px 11px",fontSize:"8.5pt"}}>← رجوع</button>
-        <div style={{fontSize:"11pt",fontWeight:700,color:C.goldL,flex:1}}>💰 الفاتورة — {report?.id}</div>
-        <button onClick={()=>window.print()} className="np" style={{background:C.gold,color:C.bg,padding:"5px 12px",fontSize:"8.5pt",fontWeight:700}}>🖨 طباعة</button>
+function delReport(key){
+  if(!confirm('تأكيد الحذف؟')) return;
+  DB.del(key);
+  reports=reports.filter(r=>r.key!==key);
+  updateCounts();
+  renderRepsList();
+}
+
+// ══ REPORT VIEW ══
+function renderRepView(){
+  if(!viewingRep) return;
+  const r=viewingRep, ai=r.ai||{};
+  document.getElementById('view-id').textContent=r.id+' · '+r.date;
+  const sevEl=document.getElementById('view-sev');
+  sevEl.textContent=`${ai.severity||0}/10`; sevEl.style.color=sevC(ai.severity||0); sevEl.style.borderColor=sevC(ai.severity||0);
+  const urgEl=document.getElementById('view-urg');
+  if(ai.urgency){urgEl.textContent=ai.urgency;urgEl.style.display='';const uc=ai.urgency==='فوري'?'var(--red)':'var(--ora)';urgEl.style.color=uc;urgEl.style.borderColor=uc;}
+  else urgEl.style.display='none';
+
+  const RH=(num,label)=>`<div class="sec-hdr"><span class="sec-num">${num}</span><span class="sec-lbl">${label}</span><div class="sec-line"></div></div>`;
+  const stCl=s=>s==='ok'?'var(--grn)':s==='warn'?'var(--ora)':s==='danger'?'var(--red)':'var(--blu)';
+
+  document.getElementById('rep-view-body').innerHTML=`
+    <div class="rep-header">
+      <div class="rh-row">
+        <div>
+          <div class="rep-name">${r.workshop?.name||''}</div>
+          <div style="font-family:monospace;font-size:6.5pt;color:var(--dim);letter-spacing:2px">CENTRE DE DIAGNOSTIC AUTOMOBILE</div>
+          <div style="font-size:8pt;color:var(--dim);margin-top:5px">${r.workshop?.city||''} · ${r.workshop?.phone||''}</div>
+        </div>
+        <div style="text-align:left">
+          <div class="rep-id">${r.id}</div>
+          <div style="font-family:monospace;font-size:8pt;color:var(--dim)">${r.date||''}</div>
+          <div style="font-size:8pt;color:var(--dim);margin-top:3px">التقني: <strong style="color:var(--goldD)">${r.workshop?.tech||''}</strong></div>
+        </div>
       </div>
-      <Crd style={{marginBottom:9}}>
-        <StT>الزبون / السيارة</StT>
-        <div style={{fontSize:"9pt",color:C.txt,lineHeight:1.8}}>
-          <span style={{color:C.dim}}>الزبون: </span>{report?.client?.name} — {report?.client?.phone}<br/>
-          <span style={{color:C.dim}}>السيارة: </span>{report?.vehicle?.make} {report?.vehicle?.model} — {report?.vehicle?.plate}
-        </div>
-      </Crd>
-      <Crd style={{marginBottom:9}}>
-        <StT>بنود الفاتورة</StT>
-        {items.map((it,i)=>(
-          <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 50px 80px 28px",gap:5,marginBottom:5,alignItems:"center"}}>
-            <input value={it.desc} onChange={e=>upd(i,"desc",e.target.value)} placeholder="الوصف" />
-            <input value={it.qty} type="number" onChange={e=>upd(i,"qty",+e.target.value)} style={{direction:"ltr"}} />
-            <input value={it.price} type="number" onChange={e=>upd(i,"price",+e.target.value)} style={{direction:"ltr"}} placeholder="DH" />
-            <button onClick={()=>setItems(it=>it.filter((_,j)=>j!==i))} style={{background:"transparent",color:C.red,fontSize:"16pt",lineHeight:1}}>×</button>
-          </div>
-        ))}
-        <button onClick={()=>setItems(it=>[...it,{desc:"",qty:1,price:0}])}
-          style={{background:C.sur2,border:`1px dashed ${C.bdr}`,color:C.dim,padding:"5px",fontSize:"8.5pt",width:"100%",marginTop:3}}>
-          + إضافة بند
-        </button>
-      </Crd>
-      <Crd style={{marginBottom:9}}>
-        <Lbl>خصم (DH)</Lbl>
-        <input value={disc} type="number" onChange={e=>setDisc(+e.target.value)} style={{direction:"ltr",marginBottom:10}} />
-        <div style={{padding:9,background:C.sur2,borderRadius:3,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div style={{fontSize:"8.5pt",color:C.dim,lineHeight:2}}>
-            المجموع: <span style={{color:C.txt,fontFamily:"monospace"}}>{fmtDH(sub)}</span><br/>
-            الخصم: <span style={{color:C.ora,fontFamily:"monospace"}}>-{fmtDH(disc)}</span>
-          </div>
-          <div style={{textAlign:"left"}}>
-            <div style={{fontSize:"7.5pt",color:C.dim}}>الإجمالي</div>
-            <div style={{fontSize:"18pt",fontWeight:900,color:C.gold,fontFamily:"monospace"}}>{fmtDH(total)}</div>
-          </div>
-        </div>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8}}>
-          <input type="checkbox" id="pd" checked={paid} onChange={e=>setPaid(e.target.checked)} style={{width:"auto"}} />
-          <label htmlFor="pd" style={{fontSize:"9pt",color:paid?C.grn:C.dim,cursor:"pointer"}}>✓ تم الدفع</label>
-        </div>
-      </Crd>
-      <button onClick={()=>onSave({items,disc,paid,sub,total,date:isoDay()})}
-        style={{background:C.grn,color:C.bg,padding:"10px",fontSize:"10pt",fontWeight:700,width:"100%"}}>
-        💾 حفظ الفاتورة
-      </button>
     </div>
-  );
-}
+    <div style="padding:13px 18px">
 
-// ── INVOICES LIST ──
-function InvList({reports, onOpen}) {
-  const wi = reports.filter(r=>r.invoice);
-  const tot = wi.reduce((s,r)=>s+(r.invoice?.total||0),0);
-  const pd = wi.filter(r=>r.invoice?.paid).reduce((s,r)=>s+(r.invoice?.total||0),0);
-  return (
-    <div className="fi" style={{padding:14,flex:1,overflowY:"auto"}}>
-      <div style={{fontSize:"11pt",fontWeight:700,color:C.goldL,marginBottom:10}}>💰 الفواتير</div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginBottom:12}}>
-        {[["الإجمالي",fmtDH(tot),C.gold],["مدفوع",fmtDH(pd),C.grn],["معلق",fmtDH(tot-pd),C.ora]].map(([l,v,c],i)=>(
-          <Crd key={i} style={{padding:"9px 11px"}}><Lbl>{l}</Lbl><div style={{fontSize:"13pt",fontWeight:700,color:c,fontFamily:"monospace"}}>{v}</div></Crd>
-        ))}
-      </div>
-      {!wi.length && <div style={{color:C.dim,textAlign:"center",padding:40}}>لا توجد فواتير</div>}
-      {wi.map((r,i)=>(
-        <div key={i} onClick={()=>onOpen(r)}
-          style={{background:C.sur,border:`1px solid ${C.bdr}`,borderRight:`3px solid ${r.invoice.paid?C.grn:C.ora}`,
-            borderRadius:4,padding:"9px 12px",marginBottom:6,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
-          <div style={{flex:1}}>
-            <div style={{display:"flex",gap:7,alignItems:"center",marginBottom:2}}>
-              <span style={{fontFamily:"monospace",fontSize:"9pt",color:C.gold}}>{r.id}</span>
-              <Bdg color={r.invoice.paid?C.grn:C.ora}>{r.invoice.paid?"مدفوع":"معلق"}</Bdg>
-            </div>
-            <div style={{fontSize:"9pt",color:C.txt}}>{r.client?.name} — {r.vehicle?.plate}</div>
-            <div style={{fontSize:"7.5pt",color:C.dim}}>{r.invoice.date}</div>
-          </div>
-          <div style={{fontFamily:"monospace",fontSize:"13pt",fontWeight:700,color:C.gold}}>{fmtDH(r.invoice.total)}</div>
+      <div class="rep-sec">
+        ${RH('01','بيانات المركبة والزبون')}
+        <table class="rtable">
+          <tr><td>الزبون</td><td style="font-family:monospace">${r.client?.name||''} | ${r.client?.phone||''}</td></tr>
+          <tr><td>المركبة</td><td style="font-family:monospace">${r.vehicle?.make||''} ${r.vehicle?.model||''} ${r.vehicle?.year||''} · ${r.vehicle?.fuel||''}</td></tr>
+          <tr><td>VIN</td><td style="font-family:monospace">${r.vehicle?.vin||'—'}</td></tr>
+          <tr><td>اللوحة</td><td style="font-family:monospace">${r.vehicle?.plate||'—'}</td></tr>
+          <tr><td>الكيلومتراج</td><td style="font-family:monospace">لوحة: ${r.vehicle?.km_d||'—'} | ECU: ${r.vehicle?.km_e||'—'}</td></tr>
+        </table>
+        <div style="background:linear-gradient(135deg,#140a00,#1a1000);border:1px solid var(--goldD);border-right:3px solid var(--ora);padding:7px 10px;margin-top:6px;border-radius:2px">
+          <div style="font-family:monospace;font-size:7pt;color:var(--ora);margin-bottom:2px">▸ شكوى الزبون</div>
+          <div style="font-size:10pt;color:var(--goldL);font-style:italic">"${r.client?.complaint||''}"</div>
         </div>
-      ))}
-    </div>
-  );
-}
-
-// ── SETTINGS ──
-function Settings({ws, onSave}) {
-  const [w,setW] = useState({...ws});
-  const up = (k,v) => setW(x=>({...x,[k]:v}));
-  return (
-    <div className="fi" style={{padding:14,flex:1,overflowY:"auto"}}>
-      <div style={{fontSize:"11pt",fontWeight:700,color:C.goldL,marginBottom:10}}>⚙️ إعدادات الورشة</div>
-      <Crd>
-        <Grd>
-          <Fld label="اسم الورشة" full><input value={w.name||""} onChange={e=>up("name",e.target.value)} /></Fld>
-          <Fld label="المدينة"><input value={w.city||""} onChange={e=>up("city",e.target.value)} /></Fld>
-          <Fld label="الهاتف"><input value={w.phone||""} onChange={e=>up("phone",e.target.value)} /></Fld>
-          <Fld label="التقني الرئيسي"><input value={w.tech||""} onChange={e=>up("tech",e.target.value)} /></Fld>
-          <Fld label="العنوان" full><input value={w.address||""} onChange={e=>up("address",e.target.value)} /></Fld>
-        </Grd>
-        <button onClick={()=>onSave(w)} style={{background:C.gold,color:C.bg,padding:"8px 22px",fontSize:"9.5pt",fontWeight:700,marginTop:10}}>
-          💾 حفظ
-        </button>
-      </Crd>
-    </div>
-  );
-}
-
-// ── WIZARD ──
-function Wizard({ws, allReports, onDone}) {
-  const [step,setStep] = useState(0);
-  const [busy,setBusy] = useState(false);
-  const [err,setErr] = useState("");
-  const [ocrSt,setOcrSt] = useState("idle");
-  const [ocrRes,setOcrRes] = useState(null);
-  const fRef = useRef();
-
-  const [form,setForm] = useState({
-    client:{name:"",phone:"",complaint:""},
-    vehicle:{make:"",model:"",year:"",color:"",fuel:"بنزين",vin:"",plate:"",km_d:"",km_e:""},
-    vitals:{...VITALS0},
-    dtcs:"",
-  });
-
-  const sC = (k,v) => setForm(f=>({...f,client:{...f.client,[k]:v}}));
-  const sV = (k,v) => setForm(f=>({...f,vehicle:{...f.vehicle,[k]:v}}));
-  const sVt = (n,k,v) => setForm(f=>({...f,vitals:{...f.vitals,[n]:{...f.vitals[n],[k]:v}}}));
-
-  const plate = form.vehicle.plate?.trim().toUpperCase();
-  const hist = allReports.filter(r=>r.vehicle?.plate?.toUpperCase()===plate && plate);
-
-  const doOCR = async file => {
-    if(!file) return;
-    setOcrSt("loading");
-    try {
-      const b64 = await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(",")[1]);r.onerror=rej;r.readAsDataURL(file);});
-      const d = await ocrAI(b64, file.type||"image/jpeg");
-      setOcrRes(d); setOcrSt("done");
-    } catch { setOcrSt("error"); }
-  };
-
-  const generate = async () => {
-    if(!form.dtcs.trim()){setErr("أدخل أكواد DTC");return;}
-    setBusy(true); setErr("");
-    try {
-      const ai = await analyzeAI(form.dtcs,form.client.complaint,form.vehicle,form.vitals,hist);
-      const rep = {id:uid(),date:isoDay(),workshop:{...ws},client:form.client,vehicle:form.vehicle,vitals:form.vitals,dtcs:form.dtcs,ai,invoice:null};
-      rep.key = "report:"+rep.id;
-      await dbSet(rep.key, rep);
-      onDone(rep);
-    } catch(e) { setErr("خطأ AI: "+e.message); }
-    setBusy(false);
-  };
-
-  const STEPS = ["الزبون","Live Data","DTC"];
-
-  return (
-    <div className="fi" style={{padding:14,flex:1,overflowY:"auto"}}>
-      <div style={{fontSize:"11pt",fontWeight:700,color:C.goldL,marginBottom:10}}>⚡ تشخيص جديد</div>
-      {/* step bar */}
-      <div style={{display:"flex",gap:4,marginBottom:12}}>
-        {STEPS.map((s,i)=>(
-          <div key={i} style={{flex:1,textAlign:"center"}}>
-            <div style={{width:24,height:24,borderRadius:3,margin:"0 auto 2px",
-              background:i<step?C.gold:i===step?C.sur2:C.sur,
-              border:`1px solid ${i<step?C.goldD:i===step?C.gold:C.bdr}`,
-              display:"flex",alignItems:"center",justifyContent:"center",
-              fontFamily:"monospace",fontSize:"8pt",color:i<step?C.bg:i===step?C.gold:C.dim}}>
-              {i<step?"✓":i+1}
-            </div>
-            <div style={{fontSize:"6.5pt",color:i===step?C.goldL:C.dim}}>{s}</div>
-          </div>
-        ))}
       </div>
 
-      <Crd>
-        {/* step 0 */}
-        {step===0 && <>
-          <StT>الزبون والمركبة</StT>
-          <Grd>
-            <Fld label="اسم الزبون"><input value={form.client.name} onChange={e=>sC("name",e.target.value)} placeholder="محمد..." /></Fld>
-            <Fld label="هاتف الزبون"><input value={form.client.phone} onChange={e=>sC("phone",e.target.value)} placeholder="0600..." /></Fld>
-            <Fld label="شكوى الزبون" full><textarea rows={2} value={form.client.complaint} onChange={e=>sC("complaint",e.target.value)} placeholder="السيارة كتهزز فلوط..." /></Fld>
-            <Fld label="الماركة"><input value={form.vehicle.make} onChange={e=>sV("make",e.target.value)} placeholder="Peugeot" /></Fld>
-            <Fld label="الموديل"><input value={form.vehicle.model} onChange={e=>sV("model",e.target.value)} placeholder="308" /></Fld>
-            <Fld label="السنة"><input value={form.vehicle.year} onChange={e=>sV("year",e.target.value)} placeholder="2018" /></Fld>
-            <Fld label="الوقود">
-              <select value={form.vehicle.fuel} onChange={e=>sV("fuel",e.target.value)}>
-                <option>بنزين</option><option>ديزل</option><option>هجين</option><option>كهربائي</option>
-              </select>
-            </Fld>
-            <Fld label="اللوحة"><input value={form.vehicle.plate} onChange={e=>sV("plate",e.target.value)} placeholder="12345-أ-1" /></Fld>
-            <Fld label="VIN" full><input value={form.vehicle.vin} onChange={e=>sV("vin",e.target.value)} placeholder="VF3..." /></Fld>
-            <Fld label="Km لوحة"><input value={form.vehicle.km_d} onChange={e=>sV("km_d",e.target.value)} placeholder="120000" /></Fld>
-            <Fld label="Km ECU"><input value={form.vehicle.km_e} onChange={e=>sV("km_e",e.target.value)} placeholder="120000" /></Fld>
-          </Grd>
-          {plate && hist.length>0 && (
-            <div style={{marginTop:7,padding:8,background:"linear-gradient(135deg,#001014,#001820)",border:`1px solid ${C.blu}`,borderRadius:3}}>
-              <Lbl color={C.blu}>⚡ {hist.length} زيارة سابقة لهاد السيارة</Lbl>
-              {hist.slice(0,2).map((h,i)=><div key={i} style={{fontSize:"8pt",color:C.dim,marginTop:2}}>· {h.date} — {h.ai?.verdict}</div>)}
-            </div>
-          )}
-        </>}
+      <div class="rep-sec">
+        ${RH('02','البيانات الحية · Live Data OBD2')}
+        <div class="grid3">${Object.values(r.vitals||{}).map(v=>`
+          <div style="background:var(--sur);border:1px solid var(--bdr);border-bottom:2px solid ${stCl(v.s)};border-radius:3px;padding:7px 9px">
+            <div style="font-size:6.5pt;color:var(--dim);font-family:monospace;text-transform:uppercase">${v.l}</div>
+            <div style="font-family:monospace;font-size:14pt;font-weight:600;color:${stCl(v.s)};margin:3px 0;direction:ltr">${v.v}</div>
+            <div style="font-size:7pt;color:var(--dim);font-family:monospace">${v.u}</div>
+          </div>`).join('')}</div>
+      </div>
 
-        {/* step 1 */}
-        {step===1 && <>
-          <StT>البيانات الحية OBD2</StT>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            {Object.entries(form.vitals).map(([name,v])=>(
-              <div key={name} style={{background:C.sur2,border:`1px solid ${C.bdr}`,borderBottom:`2px solid ${stC(v.status)}`,borderRadius:3,padding:"8px 9px"}}>
-                <Lbl>{v.label}</Lbl>
-                <input value={v.value} onChange={e=>sVt(name,"value",e.target.value)}
-                  style={{fontFamily:"monospace",fontSize:"13pt",fontWeight:600,color:stC(v.status),background:"transparent",border:"none",padding:0,direction:"ltr"}} />
-                <div style={{fontSize:"7pt",color:C.dim,fontFamily:"monospace",marginBottom:3}}>{v.unit}</div>
-                <select value={v.status} onChange={e=>sVt(name,"status",e.target.value)} style={{fontSize:"6.5pt",padding:"2px 4px",width:"auto"}}>
-                  <option value="ok">✓ OK</option><option value="warn">⚠ WARN</option>
-                  <option value="danger">✗ DANGER</option><option value="neutral">— N/A</option>
-                </select>
-              </div>
-            ))}
-          </div>
-        </>}
+      <div class="rep-sec">
+        ${RH('03','أكواد الأعطال · DTC')}
+        ${(r.dtcs||'').split(',').map(c=>c.trim()).filter(Boolean).map(code=>`
+          <div class="dtc-row">
+            <div class="dtc-code">${code}</div>
+            <div style="font-size:9pt;color:var(--txt)">${ai.dtc_meanings?.[code]||'—'}</div>
+          </div>`).join('')}
+      </div>
 
-        {/* step 2 */}
-        {step===2 && <>
-          <StT>أكواد الأعطال DTC</StT>
-          {/* OCR */}
-          <div style={{background:"linear-gradient(135deg,#080c18,#0c1020)",border:`1px solid ${C.blu}`,borderRadius:4,padding:10,marginBottom:10}}>
-            <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:6}}>
-              <Bdg color={C.blu}>OCR · AI</Bdg>
-              <span style={{fontSize:"9pt",color:C.txt,fontWeight:600}}>تصوير شاشة السكانير</span>
-            </div>
-            {ocrSt==="idle" && <button onClick={()=>fRef.current.click()} style={{background:C.blu,color:C.bg,padding:"6px 14px",fontSize:"9pt",fontWeight:700}}>📷 رفع صورة</button>}
-            {ocrSt==="loading" && <div style={{display:"flex",gap:8,alignItems:"center",color:C.gold}}><Sp /><span style={{fontSize:"8.5pt"}}>AI كيحلل...</span></div>}
-            {ocrSt==="done" && ocrRes && (
-              <div>
-                <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:6}}>
-                  {ocrRes.codes.map((c,i)=><span key={i} style={{background:C.sur2,border:`1px solid ${C.ora}`,color:C.ora,fontFamily:"monospace",fontSize:"9pt",padding:"2px 7px",borderRadius:2}}>{c}</span>)}
-                </div>
-                <div style={{fontSize:"7.5pt",color:C.dim,marginBottom:6}}>ثقة: {ocrRes.confidence==="high"?"🟢 عالية":ocrRes.confidence==="medium"?"🟡 متوسطة":"🔴 منخفضة"}</div>
-                <button onClick={()=>{setForm(f=>({...f,dtcs:ocrRes.codes.join(", ")}));setOcrSt("idle");setOcrRes(null);}}
-                  style={{background:C.grn,color:C.bg,padding:"5px 13px",fontSize:"8.5pt",fontWeight:700}}>✓ استعمل هاد الأكواد</button>
-              </div>
-            )}
-            {ocrSt==="error" && (
-              <div style={{color:C.red,fontSize:"8.5pt"}}>
-                خطأ — جرب صورة أوضح
-                <button onClick={()=>setOcrSt("idle")} style={{background:"transparent",color:C.dim,fontSize:"8pt",textDecoration:"underline",marginRight:7}}>إعادة</button>
-              </div>
-            )}
-            <input ref={fRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>doOCR(e.target.files[0])} />
-          </div>
-          <Lbl>أو أدخل الأكواد يدوياً</Lbl>
-          <textarea rows={2} value={form.dtcs} onChange={e=>setForm(f=>({...f,dtcs:e.target.value}))}
-            placeholder="P0300, P0420, P0171..." style={{fontFamily:"monospace",direction:"ltr",letterSpacing:1}} />
-          <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:6}}>
-            {form.dtcs.split(",").map(c=>c.trim()).filter(Boolean).map((code,i)=>(
-              <span key={i} style={{background:C.sur2,border:`1px solid ${C.ora}`,color:C.ora,fontFamily:"monospace",fontSize:"9pt",padding:"2px 7px",borderRadius:2}}>{code}</span>
-            ))}
-          </div>
-          {err && <div style={{color:C.red,fontSize:"8.5pt",marginTop:7,fontFamily:"monospace"}}>{err}</div>}
-          {busy && <div style={{display:"flex",alignItems:"center",gap:9,marginTop:11,color:C.gold}}><Sp /><div><div style={{fontSize:"9pt"}}>AI كيحلل + Cross-Reference...</div><div style={{fontSize:"7.5pt",color:C.dim}}>قد يأخذ 15 ثانية</div></div></div>}
-        </>}
-
-        {/* nav */}
-        <div style={{display:"flex",justifyContent:"space-between",marginTop:12}}>
-          {step>0
-            ? <button onClick={()=>setStep(s=>s-1)} style={{background:C.sur2,border:`1px solid ${C.bdr}`,color:C.dim,padding:"7px 17px",fontSize:"9.5pt"}}>← رجوع</button>
-            : <div />}
-          {step<2
-            ? <button onClick={()=>setStep(s=>s+1)} style={{background:C.gold,color:C.bg,padding:"7px 20px",fontSize:"9.5pt",fontWeight:700}}>التالي →</button>
-            : <button onClick={generate} disabled={busy} style={{background:busy?C.bdr:C.grn,color:busy?C.dim:C.bg,padding:"7px 20px",fontSize:"9.5pt",fontWeight:700,opacity:busy?.7:1}}>
-                {busy ? "جاري التحليل..." : "⚡ توليد التقرير AI"}
-              </button>}
+      <div class="rep-sec">
+        ${RH('04','التحليل الذكي + Cross-Reference')}
+        ${ai.cross_ref_insight?`<div class="cross-ref">
+          <div style="font-family:monospace;font-size:7pt;color:var(--blu);margin-bottom:3px">⚡ CROSS-REFERENCE INSIGHT</div>
+          <div style="font-size:9.5pt;color:var(--goldL);font-weight:600">${ai.cross_ref_insight}</div>
+        </div>`:''}
+        <div style="background:linear-gradient(135deg,#080c18,#0c1020);border:1px solid var(--bdr);border-top:2px solid var(--blu);border-radius:3px;padding:9px 11px">
+          <span class="bdg" style="color:var(--blu);border-color:var(--blu)">CLAUDE AI ANALYSIS</span>
+          <div style="margin-top:7px;font-size:10pt;color:var(--txt);line-height:1.7">${ai.root_cause||''}</div>
         </div>
-      </Crd>
+        <div class="sev-bar">
+          <span style="font-family:monospace;font-size:8pt;color:var(--dim);white-space:nowrap">درجة الخطورة:</span>
+          <div class="sev-track"><div class="sev-fill" style="width:${(ai.severity||0)*10}%;background:${sevC(ai.severity||0)}"></div></div>
+          <span style="font-family:monospace;font-size:12pt;font-weight:600;color:${sevC(ai.severity||0)}">${ai.severity||0}/10</span>
+        </div>
+        ${ai.cost_min?`<div class="grid2">
+          <div style="background:var(--sur);border:1px solid var(--bdr);border-radius:3px;padding:6px 10px;text-align:center">
+            <span class="lbl">COÛT ESTIMÉ</span>
+            <div style="font-size:12pt;font-weight:700;color:var(--gold);font-family:monospace">${ai.cost_min}–${ai.cost_max} DH</div>
+          </div>
+          <div style="background:var(--sur);border:1px solid var(--bdr);border-radius:3px;padding:6px 10px;text-align:center">
+            <span class="lbl">URGENCE</span>
+            <div style="font-size:12pt;font-weight:700;color:var(--ora)">${ai.urgency}</div>
+          </div>
+        </div>`:''}
+      </div>
+
+      <div class="rep-sec">
+        ${RH('05','خطة الإصلاح · Plan de Réparation')}
+        <ul style="list-style:none">${(ai.actions||[]).map((a,i)=>`
+          <li style="display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--bdr);font-size:9.5pt">
+            <div style="font-family:monospace;font-size:8pt;color:var(--gold);background:var(--bdrG);border:1px solid var(--goldD);width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:2px;flex-shrink:0">${i+1}</div>
+            <span style="color:var(--txt);line-height:1.5">${a}</span>
+          </li>`).join('')}</ul>
+        <div class="verdict">
+          <span style="font-family:monospace;font-size:8pt;color:var(--dim)">VERDICT FINAL</span>
+          <span style="font-size:11pt;font-weight:700;color:var(--grn)">${ai.verdict||''}</span>
+        </div>
+      </div>
+
+      ${r.invoice?`<div class="rep-sec">
+        ${RH('06','الفاتورة · Facture')}
+        <table class="rtable" style="margin-bottom:6px">
+          <thead><tr style="background:var(--sur2)">
+            ${['البيان','الكمية','السعر','المجموع'].map(h=>`<th style="padding:4px 7px;border:1px solid var(--bdr);color:var(--dim);text-align:right;font-weight:600">${h}</th>`).join('')}
+          </tr></thead>
+          <tbody>${r.invoice.items.map(it=>`<tr>
+            <td>${it.desc}</td>
+            <td style="font-family:monospace;text-align:center">${it.qty}</td>
+            <td style="font-family:monospace;direction:ltr">${it.price} DH</td>
+            <td style="font-family:monospace;direction:ltr;color:var(--gold);font-weight:600">${it.qty*it.price} DH</td>
+          </tr>`).join('')}</tbody>
+        </table>
+        <div style="text-align:left">
+          <div style="font-size:18pt;font-weight:900;color:var(--gold);font-family:monospace">${fmtDH(r.invoice.total)}</div>
+          <span class="bdg" style="color:${r.invoice.paid?'var(--grn)':'var(--ora)'};border-color:${r.invoice.paid?'var(--grn)':'var(--ora)'}">${r.invoice.paid?'✓ مدفوع':'⏳ معلق'}</span>
+        </div>
+      </div>`:''}
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:22px;padding-top:9px;border-top:1px solid var(--bdr)">
+        ${['توقيع التقني','توقيع الزبون'].map(l=>`<div style="text-align:center">
+          <div style="border-bottom:1px solid var(--goldD);margin:24px auto 5px;width:70%"></div>
+          <div style="font-family:monospace;font-size:7.5pt;color:var(--dim)">${l}</div>
+        </div>`).join('')}
+      </div>
     </div>
-  );
+    <div style="background:var(--sur);border-top:1px solid var(--bdrG);padding:6px 18px;display:flex;justify-content:space-between">
+      <span style="font-family:monospace;font-size:7pt;color:var(--dim)">الكاشف الذكي v3 Pro</span>
+      <span style="font-family:monospace;font-size:7pt;color:var(--goldD)">${r.workshop?.name||''} © ${new Date().getFullYear()}</span>
+    </div>`;
 }
 
-// ── REPORT VIEW ──
-function RepView({rep, onBack, onInvoice}) {
-  const ai = rep.ai||{};
-  const stCl = s => s==="ok"?C.grn:s==="warn"?C.ora:s==="danger"?C.red:C.blu;
-  const RH = ({num,label}) => (
-    <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:7}}>
-      <span style={{fontFamily:"monospace",fontSize:"7pt",color:C.gold,background:C.bdrG,border:`1px solid ${C.goldD}`,padding:"1px 5px",borderRadius:2}}>{num}</span>
-      <span style={{fontSize:"10pt",fontWeight:700,color:C.goldL}}>{label}</span>
-      <div style={{flex:1,height:1,background:`linear-gradient(90deg,${C.goldD},transparent)`}} />
-    </div>
-  );
-  return (
-    <div style={{flex:1,overflowY:"auto",background:C.bg}}>
-      {/* toolbar */}
-      <div className="np" style={{background:C.sur,borderBottom:`1px solid ${C.bdrG}`,padding:"8px 14px",display:"flex",gap:7,alignItems:"center"}}>
-        <button onClick={onBack} style={{background:C.sur2,border:`1px solid ${C.bdr}`,color:C.dim,padding:"5px 11px",fontSize:"8.5pt"}}>← رجوع</button>
-        <button onClick={()=>window.print()} style={{background:C.gold,color:C.bg,padding:"5px 13px",fontSize:"8.5pt",fontWeight:700}}>🖨 PDF</button>
-        <button onClick={onInvoice} style={{background:C.grn,color:C.bg,padding:"5px 13px",fontSize:"8.5pt",fontWeight:700}}>💰 فاتورة</button>
-        <span style={{fontFamily:"monospace",fontSize:"7.5pt",color:C.dim,marginRight:"auto"}}>{rep.id} · {rep.date}</span>
-        <Bdg color={sevC(ai.severity||0)}>{ai.severity||0}/10</Bdg>
-        {ai.urgency && <Bdg color={ai.urgency==="فوري"?C.red:C.ora}>{ai.urgency}</Bdg>}
-      </div>
-      {/* report header */}
-      <div style={{background:"linear-gradient(135deg,#080c14,#0c1420)",borderBottom:`1px solid ${C.goldD}`,padding:"13px 18px",position:"relative"}}>
-        <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,transparent,${C.gold},transparent)`}} />
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+// ══ INVOICE ══
+function openInvoice(){
+  if(!viewingRep) return;
+  invRep=viewingRep;
+  invItems=invRep.invoice?.items||[{desc:'فحص إلكتروني OBD2',qty:1,price:150},{desc:'تشخيص + تقرير AI',qty:1,price:100}];
+  document.getElementById('inv-client').innerHTML=`<span style="color:var(--dim)">الزبون: </span>${invRep.client?.name} — ${invRep.client?.phone}<br><span style="color:var(--dim)">السيارة: </span>${invRep.vehicle?.make} ${invRep.vehicle?.model} — ${invRep.vehicle?.plate}`;
+  document.getElementById('inv-disc').value=invRep.invoice?.disc||0;
+  document.getElementById('inv-paid').checked=invRep.invoice?.paid||false;
+  renderInvItems();
+  calcInv();
+  nav('inv-edit');
+}
+
+function renderInvItems(){
+  document.getElementById('inv-items-wrap').innerHTML=invItems.map((it,i)=>`
+    <div class="inv-row">
+      <input value="${it.desc}" oninput="invItems[${i}].desc=this.value" placeholder="الوصف">
+      <input type="number" value="${it.qty}" oninput="invItems[${i}].qty=+this.value;calcInv()" style="direction:ltr">
+      <input type="number" value="${it.price}" oninput="invItems[${i}].price=+this.value;calcInv()" style="direction:ltr" placeholder="DH">
+      <button onclick="invItems.splice(${i},1);renderInvItems();calcInv()" style="background:transparent;color:var(--red);font-size:16pt;line-height:1">×</button>
+    </div>`).join('');
+}
+
+function addInvItem(){invItems.push({desc:'',qty:1,price:0});renderInvItems();calcInv();}
+
+function calcInv(){
+  const sub=invItems.reduce((s,it)=>s+it.qty*it.price,0);
+  const disc=+document.getElementById('inv-disc').value||0;
+  const total=sub-disc;
+  document.getElementById('inv-sub').textContent=fmtDH(sub);
+  document.getElementById('inv-disc-show').textContent=fmtDH(disc);
+  document.getElementById('inv-total-show').textContent=fmtDH(total);
+  const paid=document.getElementById('inv-paid').checked;
+  document.getElementById('inv-paid-lbl').style.color=paid?'var(--grn)':'var(--dim)';
+}
+
+function saveInvoice(){
+  const sub=invItems.reduce((s,it)=>s+it.qty*it.price,0);
+  const disc=+document.getElementById('inv-disc').value||0;
+  const paid=document.getElementById('inv-paid').checked;
+  const invoice={items:invItems,disc,paid,sub,total:sub-disc,date:new Date().toISOString().slice(0,10)};
+  const updated={...invRep,invoice};
+  DB.set(updated.key,updated);
+  const idx=reports.findIndex(r=>r.key===updated.key);
+  if(idx>=0) reports[idx]=updated;
+  viewingRep=updated;
+  updateCounts();
+  renderRepView();
+  nav('view');
+}
+
+// ══ CLIENTS ══
+function renderClients(){
+  const map={};
+  reports.forEach(r=>{const k=r.client?.phone||r.client?.name;if(k){if(!map[k])map[k]={...r.client,visits:[]};map[k].visits.push(r);}});
+  const list=Object.values(map);
+  document.getElementById('cli-list').innerHTML=list.length===0
+    ?'<div style="color:var(--dim);text-align:center;padding:40px">لا يوجد زبائن</div>'
+    :list.map(c=>`
+      <div class="card" style="border-right:3px solid var(--blu)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
           <div>
-            <div style={{fontSize:"16pt",fontWeight:900,color:C.goldL}}>{rep.workshop?.name}</div>
-            <div style={{fontFamily:"monospace",fontSize:"6.5pt",color:C.dim,letterSpacing:2}}>CENTRE DE DIAGNOSTIC AUTOMOBILE</div>
-            <div style={{fontSize:"8pt",color:C.dim,marginTop:5}}>{rep.workshop?.city} · {rep.workshop?.phone}</div>
+            <div style="font-size:10pt;font-weight:600;color:var(--txt)">${c.name||'—'}</div>
+            <div style="font-size:8pt;color:var(--dim);font-family:monospace">${c.phone||''}</div>
           </div>
-          <div style={{textAlign:"left"}}>
-            <div style={{fontFamily:"monospace",fontSize:"12pt",fontWeight:600,color:C.gold}}>{rep.id}</div>
-            <div style={{fontFamily:"monospace",fontSize:"8pt",color:C.dim}}>{rep.date}</div>
-            <div style={{fontSize:"8pt",color:C.dim,marginTop:3}}>التقني: <strong style={{color:C.goldD}}>{rep.workshop?.tech}</strong></div>
+          <div style="text-align:left">
+            <div style="font-family:monospace;font-size:14pt;color:var(--gold);font-weight:700">${c.visits.length}</div>
+            <div style="font-size:7pt;color:var(--dim)">زيارة</div>
           </div>
         </div>
-      </div>
-
-      <div style={{padding:"13px 18px"}}>
-        {/* 01 */}
-        <div className="section" style={{marginBottom:12}}>
-          <RH num="01" label="بيانات المركبة والزبون" />
-          <table style={{width:"100%",borderCollapse:"collapse",fontSize:"9pt"}}>
-            <tbody>
-              {[
-                ["الزبون",`${rep.client?.name} | ${rep.client?.phone}`],
-                ["المركبة",`${rep.vehicle?.make} ${rep.vehicle?.model} ${rep.vehicle?.year} · ${rep.vehicle?.fuel}`],
-                ["VIN",rep.vehicle?.vin||"—"],["اللوحة",rep.vehicle?.plate||"—"],
-                ["الكيلومتراج",`لوحة: ${rep.vehicle?.km_d} | ECU: ${rep.vehicle?.km_e}`],
-              ].map(([k,v],i)=>(
-                <tr key={i} style={{background:i%2===0?C.sur:C.sur2}}>
-                  <td style={{padding:"4px 7px",border:`1px solid ${C.bdr}`,color:C.dim,fontSize:"8pt",width:"32%"}}>{k}</td>
-                  <td style={{padding:"4px 7px",border:`1px solid ${C.bdr}`,color:C.txt,fontFamily:"monospace",fontSize:"8.5pt"}}>{v}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div style={{background:"linear-gradient(135deg,#140a00,#1a1000)",border:`1px solid ${C.goldD}`,borderRight:`3px solid ${C.ora}`,padding:"7px 10px",marginTop:6,borderRadius:2}}>
-            <div style={{fontFamily:"monospace",fontSize:"7pt",color:C.ora,marginBottom:2}}>▸ شكوى الزبون</div>
-            <div style={{fontSize:"10pt",color:C.goldL,fontStyle:"italic"}}>"{rep.client?.complaint}"</div>
-          </div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap">
+          ${c.visits.slice(0,3).map(v=>`<span style="font-size:7.5pt;color:var(--dim);background:var(--sur2);border:1px solid var(--bdr);padding:1px 6px;border-radius:2px;font-family:monospace">${v.vehicle?.plate||''} · ${v.date||''}</span>`).join('')}
         </div>
-        {/* 02 live */}
-        <div className="section" style={{marginBottom:12}}>
-          <RH num="02" label="البيانات الحية · Live Data OBD2" />
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:5}}>
-            {Object.values(rep.vitals||{}).map((v,i)=>(
-              <div key={i} style={{background:C.sur,border:`1px solid ${C.bdr}`,borderBottom:`2px solid ${stCl(v.status)}`,borderRadius:3,padding:"7px 9px"}}>
-                <div style={{fontSize:"6.5pt",color:C.dim,fontFamily:"monospace",textTransform:"uppercase"}}>{v.label}</div>
-                <div style={{fontFamily:"monospace",fontSize:"14pt",fontWeight:600,color:stCl(v.status),margin:"3px 0",direction:"ltr"}}>{v.value}</div>
-                <div style={{fontSize:"7pt",color:C.dim,fontFamily:"monospace"}}>{v.unit}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-        {/* 03 dtc */}
-        <div className="section" style={{marginBottom:12}}>
-          <RH num="03" label="أكواد الأعطال · DTC" />
-          {(rep.dtcs||"").split(",").map(c=>c.trim()).filter(Boolean).map((code,i)=>(
-            <div key={i} style={{background:"linear-gradient(135deg,#120800,#180d00)",border:`1px solid ${C.bdr}`,borderRight:`3px solid ${C.ora}`,borderRadius:3,padding:"7px 10px",marginBottom:5,display:"grid",gridTemplateColumns:"auto 1fr",gap:9}}>
-              <div style={{fontFamily:"monospace",fontSize:"13pt",fontWeight:600,color:C.ora}}>{code}</div>
-              <div style={{fontSize:"9pt",color:C.txt}}>{ai.dtc_meanings?.[code]||"—"}</div>
-            </div>
-          ))}
-        </div>
-        {/* 04 AI */}
-        <div className="section" style={{marginBottom:12}}>
-          <RH num="04" label="التحليل الذكي + Cross-Reference" />
-          {ai.cross_ref_insight && (
-            <div style={{background:"linear-gradient(135deg,#001014,#001820)",border:`1px solid ${C.blu}`,borderRight:`3px solid ${C.blu}`,borderRadius:3,padding:"7px 10px",marginBottom:8}}>
-              <div style={{fontFamily:"monospace",fontSize:"7pt",color:C.blu,marginBottom:3}}>⚡ CROSS-REFERENCE INSIGHT</div>
-              <div style={{fontSize:"9.5pt",color:C.goldL,fontWeight:600}}>{ai.cross_ref_insight}</div>
-            </div>
-          )}
-          <div style={{background:"linear-gradient(135deg,#080c18,#0c1020)",border:`1px solid ${C.bdr}`,borderTop:`2px solid ${C.blu}`,borderRadius:3,padding:"9px 11px"}}>
-            <Bdg color={C.blu}>CLAUDE AI ANALYSIS</Bdg>
-            <div style={{marginTop:7,fontSize:"10pt",color:C.txt,lineHeight:1.7}}>{ai.root_cause}</div>
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:9,margin:"8px 0"}}>
-            <span style={{fontFamily:"monospace",fontSize:"8pt",color:C.dim,whiteSpace:"nowrap"}}>درجة الخطورة:</span>
-            <div style={{flex:1,height:11,background:C.bdr,borderRadius:2,overflow:"hidden"}}>
-              <div style={{height:"100%",width:`${(ai.severity||0)*10}%`,background:sevC(ai.severity||0)}} />
-            </div>
-            <span style={{fontFamily:"monospace",fontSize:"12pt",fontWeight:600,color:sevC(ai.severity||0)}}>{ai.severity||0}/10</span>
-          </div>
-          {ai.cost_min && (
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>
-              <div style={{background:C.sur,border:`1px solid ${C.bdr}`,borderRadius:3,padding:"6px 10px",textAlign:"center"}}>
-                <Lbl>COÛT ESTIMÉ</Lbl>
-                <div style={{fontSize:"12pt",fontWeight:700,color:C.gold,fontFamily:"monospace"}}>{ai.cost_min}–{ai.cost_max} DH</div>
-              </div>
-              <div style={{background:C.sur,border:`1px solid ${C.bdr}`,borderRadius:3,padding:"6px 10px",textAlign:"center"}}>
-                <Lbl>URGENCE</Lbl>
-                <div style={{fontSize:"12pt",fontWeight:700,color:C.ora}}>{ai.urgency}</div>
-              </div>
-            </div>
-          )}
-        </div>
-        {/* 05 actions */}
-        <div className="section" style={{marginBottom:12}}>
-          <RH num="05" label="خطة الإصلاح · Plan de Réparation" />
-          <ul style={{listStyle:"none"}}>
-            {(ai.actions||[]).map((a,i)=>(
-              <li key={i} style={{display:"flex",gap:8,alignItems:"flex-start",padding:"7px 0",borderBottom:`1px solid ${C.bdr}`,fontSize:"9.5pt"}}>
-                <div style={{fontFamily:"monospace",fontSize:"8pt",color:C.gold,background:C.bdrG,border:`1px solid ${C.goldD}`,width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:2,flexShrink:0}}>{i+1}</div>
-                <span style={{color:C.txt,lineHeight:1.5}}>{a}</span>
-              </li>
-            ))}
-          </ul>
-          <div style={{background:"linear-gradient(135deg,#001808,#002010)",border:`1px solid ${C.grn}`,borderRadius:3,padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
-            <span style={{fontFamily:"monospace",fontSize:"8pt",color:C.dim}}>VERDICT FINAL</span>
-            <span style={{fontSize:"11pt",fontWeight:700,color:C.grn}}>{ai.verdict}</span>
-          </div>
-        </div>
-        {/* 06 invoice */}
-        {rep.invoice && (
-          <div className="section" style={{marginBottom:12}}>
-            <RH num="06" label="الفاتورة · Facture" />
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:"9pt",marginBottom:6}}>
-              <thead>
-                <tr style={{background:C.sur2}}>
-                  {["البيان","الكمية","السعر","المجموع"].map((h,i)=>(
-                    <th key={i} style={{padding:"4px 7px",border:`1px solid ${C.bdr}`,color:C.dim,textAlign:"right",fontWeight:600}}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rep.invoice.items.map((it,i)=>(
-                  <tr key={i} style={{background:i%2===0?C.sur:C.sur2}}>
-                    <td style={{padding:"4px 7px",border:`1px solid ${C.bdr}`,color:C.txt}}>{it.desc}</td>
-                    <td style={{padding:"4px 7px",border:`1px solid ${C.bdr}`,color:C.txt,textAlign:"center",fontFamily:"monospace"}}>{it.qty}</td>
-                    <td style={{padding:"4px 7px",border:`1px solid ${C.bdr}`,color:C.txt,fontFamily:"monospace",direction:"ltr"}}>{it.price} DH</td>
-                    <td style={{padding:"4px 7px",border:`1px solid ${C.bdr}`,color:C.gold,fontFamily:"monospace",direction:"ltr",fontWeight:600}}>{it.qty*it.price} DH</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div style={{textAlign:"left"}}>
-              <div style={{fontSize:"18pt",fontWeight:900,color:C.gold,fontFamily:"monospace"}}>{fmtDH(rep.invoice.total)}</div>
-              <Bdg color={rep.invoice.paid?C.grn:C.ora}>{rep.invoice.paid?"✓ مدفوع":"⏳ معلق"}</Bdg>
-            </div>
-          </div>
-        )}
-        {/* signature */}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:40,marginTop:22,paddingTop:9,borderTop:`1px solid ${C.bdr}`}}>
-          {["توقيع التقني","توقيع الزبون"].map((l,i)=>(
-            <div key={i} style={{textAlign:"center"}}>
-              <div style={{borderBottom:`1px solid ${C.goldD}`,margin:"24px auto 5px",width:"70%"}} />
-              <div style={{fontFamily:"monospace",fontSize:"7.5pt",color:C.dim}}>{l}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div style={{background:C.sur,borderTop:`1px solid ${C.bdrG}`,padding:"6px 18px",display:"flex",justifyContent:"space-between"}}>
-        <span style={{fontFamily:"monospace",fontSize:"7pt",color:C.dim}}>الكاشف الذكي v3 Pro</span>
-        <span style={{fontFamily:"monospace",fontSize:"7pt",color:C.goldD}}>{rep.workshop?.name} © {new Date().getFullYear()}</span>
-      </div>
-    </div>
-  );
+      </div>`).join('');
 }
 
-// ── ROOT ──
-export default function App() {
-  const [page, setPage] = useState("dash");
-  const [reports, setReports] = useState([]);
-  const [ws, setWs] = useState({name:"ورشة النجوم",city:"الدار البيضاء",phone:"0600000000",tech:"محمد"});
-  const [viewRep, setViewRep] = useState(null);
-  const [invRep, setInvRep] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  const loadAll = async () => {
-    const wk = await dbGet("workshop:cfg");
-    if(wk) setWs(wk);
-    const keys = await dbList("report:");
-    const arr = [];
-    for(const k of keys){ const r=await dbGet(k); if(r) arr.push({...r,key:k}); }
-    arr.sort((a,b)=>(b.date||"").localeCompare(a.date||""));
-    setReports(arr);
-    setLoading(false);
-  };
-
-  useEffect(()=>{ loadAll(); },[]);
-
-  const navTo = p => { setPage(p); if(p!=="view") setViewRep(null); if(p!=="inv_edit") setInvRep(null); };
-
-  const handleDone = async rep => { await loadAll(); setViewRep(rep); setPage("view"); };
-  const handleDel = async key => {
-    if(!confirm("تأكيد الحذف؟")) return;
-    await dbDel(key); await loadAll();
-    if(viewRep?.key===key){ setViewRep(null); setPage("reps"); }
-  };
-  const handleSaveInv = async inv => {
-    const upd = {...invRep, invoice:inv};
-    await dbSet(upd.key, upd);
-    await loadAll();
-    setViewRep(upd); setInvRep(null); setPage("view");
-  };
-  const handleSaveWs = async w => { await dbSet("workshop:cfg",w); setWs(w); };
-
-  const counts = {
-    reps: reports.length,
-    cli: [...new Set(reports.map(r=>r.client?.phone).filter(Boolean))].length,
-    veh: [...new Set(reports.map(r=>r.vehicle?.plate).filter(Boolean))].length,
-    inv: reports.filter(r=>r.invoice&&!r.invoice.paid).length,
-  };
-
-  if(loading) return (
-    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,flexDirection:"column",gap:10}}>
-      <style>{CSS}</style>
-      <Sp />
-      <div style={{color:C.goldL,fontSize:"10pt",fontFamily:"'Cairo',sans-serif"}}>جاري التحميل...</div>
-    </div>
-  );
-
-  return (
-    <div style={{display:"flex",height:"100vh",overflow:"hidden",background:C.bg}}>
-      <style>{CSS}</style>
-      <Sidebar page={page} setPage={navTo} counts={counts} />
-      <div style={{flex:1,display:"flex",overflow:"hidden"}}>
-        {page==="dash"      && <Dashboard reports={reports} ws={ws} />}
-        {page==="new"       && <Wizard ws={ws} allReports={reports} onDone={handleDone} />}
-        {page==="reps"      && <RepsList reports={reports} onView={r=>{setViewRep(r);setPage("view");}} onDelete={handleDel} />}
-        {page==="view"      && viewRep && <RepView rep={viewRep} onBack={()=>setPage("reps")} onInvoice={()=>{setInvRep(viewRep);setPage("inv_edit");}} />}
-        {page==="inv_edit"  && invRep  && <InvEdit report={invRep} onSave={handleSaveInv} onBack={()=>setPage("view")} />}
-        {page==="cli"       && <Clients reports={reports} />}
-        {page==="veh"       && <Vehicles reports={reports} />}
-        {page==="inv"       && <InvList reports={reports} onOpen={r=>{setInvRep(r);setPage("inv_edit");}} />}
-        {page==="set"       && <Settings ws={ws} onSave={handleSaveWs} />}
-      </div>
-    </div>
-  );
+// ══ VEHICLES ══
+function renderVehicles(){
+  const map={};
+  reports.forEach(r=>{const k=r.vehicle?.plate||r.vehicle?.vin;if(k){if(!map[k])map[k]={...r.vehicle,hist:[]};map[k].hist.push(r);}});
+  const list=Object.values(map);
+  document.getElementById('veh-list').innerHTML=list.length===0
+    ?'<div style="color:var(--dim);text-align:center;padding:40px">لا توجد سيارات</div>'
+    :list.map(v=>`
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+          <div>
+            <div style="font-size:10pt;font-weight:600;color:var(--txt)">${v.make||''} ${v.model||''} ${v.year||''}</div>
+            <div style="font-family:monospace;font-size:9pt;color:var(--ora)">${v.plate||''}</div>
+          </div>
+          <div style="text-align:left">
+            <div style="font-family:monospace;font-size:14pt;color:var(--gold);font-weight:700">${v.hist.length}</div>
+            <div style="font-size:7pt;color:var(--dim)">زيارة</div>
+          </div>
+        </div>
+        ${v.hist.slice(0,3).map(h=>`<div style="display:flex;gap:7px;align-items:center;margin-top:3px;font-size:8pt">
+          <span style="color:var(--dim);font-family:monospace">${h.date||''}</span>
+          <span style="color:var(--ora);font-family:monospace">${h.dtcs||''}</span>
+          <span style="color:var(--txt);flex:1">${h.ai?.verdict||''}</span>
+        </div>`).join('')}
+      </div>`).join('');
 }
+
+// ══ INVOICE LIST ══
+function renderInvList(){
+  const wi=reports.filter(r=>r.invoice);
+  const tot=wi.reduce((s,r)=>s+(r.invoice?.total||0),0);
+  const pd=wi.filter(r=>r.invoice?.paid).reduce((s,r)=>s+(r.invoice?.total||0),0);
+  document.getElementById('inv-tot').textContent=fmtDH(tot);
+  document.getElementById('inv-pd').textContent=fmtDH(pd);
+  document.getElementById('inv-pnd').textContent=fmtDH(tot-pd);
+  document.getElementById('inv-list').innerHTML=wi.length===0
+    ?'<div style="color:var(--dim);text-align:center;padding:40px">لا توجد فواتير</div>'
+    :wi.map(r=>`
+      <div class="rep-item" style="border-right:3px solid ${r.invoice.paid?'var(--grn)':'var(--ora)'};cursor:pointer" onclick="openInvEdit('${r.key}')">
+        <div style="flex:1">
+          <div style="display:flex;gap:7px;align-items:center;margin-bottom:2px">
+            <span style="font-family:monospace;font-size:9pt;color:var(--gold)">${r.id}</span>
+            <span class="bdg" style="color:${r.invoice.paid?'var(--grn)':'var(--ora)'};border-color:${r.invoice.paid?'var(--grn)':'var(--ora)'}">${r.invoice.paid?'مدفوع':'معلق'}</span>
+          </div>
+          <div style="font-size:9pt;color:var(--txt)">${r.client?.name||''} — ${r.vehicle?.plate||''}</div>
+          <div style="font-size:7.5pt;color:var(--dim)">${r.invoice.date||''}</div>
+        </div>
+        <div style="font-family:monospace;font-size:13pt;font-weight:700;color:var(--gold)">${fmtDH(r.invoice.total)}</div>
+      </div>`).join('');
+}
+
+function openInvEdit(key){
+  viewingRep=reports.find(r=>r.key===key);
+  if(viewingRep) openInvoice();
+}
+
+// ══ SETTINGS ══
+function loadSettings(){
+  document.getElementById('ws-name').value=ws.name||'';
+  document.getElementById('ws-city').value=ws.city||'';
+  document.getElementById('ws-phone').value=ws.phone||'';
+  document.getElementById('ws-tech').value=ws.tech||'';
+  document.getElementById('ws-key').value=ws.key||'';
+}
+function saveWs(){
+  ws={name:document.getElementById('ws-name').value,city:document.getElementById('ws-city').value,phone:document.getElementById('ws-phone').value,tech:document.getElementById('ws-tech').value,key:document.getElementById('ws-key').value};
+  DB.set('ws:cfg',ws);
+  alert('✅ تم الحفظ');
+}
+
+// ══ START ══
+init();
+</script>
+</body>
+</html>
